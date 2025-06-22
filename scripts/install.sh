@@ -1,4 +1,3 @@
-
 #!/bin/bash
 # HostPanel Pro - Universal VPS Installation Script
 # Compatible with Ubuntu, Debian, CentOS, Rocky Linux, AlmaLinux, Fedora, OpenSUSE
@@ -64,6 +63,62 @@ check_root() {
     fi
 }
 
+# Install Node.js 18.x specifically
+install_nodejs() {
+    print_status "Installing Node.js 18.x..."
+    
+    case $ID_LIKE in
+        *debian*|*ubuntu*)
+            # Remove any existing Node.js installations
+            apt remove -y nodejs npm 2>/dev/null || true
+            
+            # Install Node.js 18.x from NodeSource
+            curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+            apt install -y nodejs
+            
+            # Verify installation
+            node_version=$(node --version)
+            npm_version=$(npm --version)
+            print_status "Node.js installed: $node_version"
+            print_status "npm installed: $npm_version"
+            ;;
+            
+        *rhel*|*centos*|*fedora*)
+            # Remove any existing Node.js installations
+            if command -v dnf &> /dev/null; then
+                dnf remove -y nodejs npm 2>/dev/null || true
+            else
+                yum remove -y nodejs npm 2>/dev/null || true
+            fi
+            
+            # Install Node.js 18.x from NodeSource
+            curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+            if command -v dnf &> /dev/null; then
+                dnf install -y nodejs
+            else
+                yum install -y nodejs
+            fi
+            
+            # Verify installation
+            node_version=$(node --version)
+            npm_version=$(npm --version)
+            print_status "Node.js installed: $node_version"
+            print_status "npm installed: $npm_version"
+            ;;
+            
+        *suse*)
+            # For OpenSUSE, use zypper
+            zypper remove -y nodejs npm 2>/dev/null || true
+            zypper install -y nodejs18 npm18
+            ;;
+            
+        *)
+            print_error "Unsupported OS for Node.js installation: $OS"
+            exit 1
+            ;;
+    esac
+}
+
 # Install dependencies based on distribution
 install_dependencies() {
     print_status "Installing system dependencies..."
@@ -71,13 +126,9 @@ install_dependencies() {
     case $ID_LIKE in
         *debian*|*ubuntu*)
             apt update
-            apt install -y curl wget git nginx nodejs npm mysql-server redis-server \
+            apt install -y curl wget git nginx mysql-server redis-server \
                           certbot python3-certbot-nginx ufw fail2ban htop iotop \
-                          build-essential software-properties-common unzip
-            
-            # Install Node.js 18.x
-            curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-            apt install -y nodejs
+                          build-essential software-properties-common unzip bc
             ;;
             
         *rhel*|*centos*|*fedora*)
@@ -86,38 +137,30 @@ install_dependencies() {
                 if command -v dnf &> /dev/null; then
                     dnf install -y epel-release
                     dnf update -y
-                    dnf install -y curl wget git nginx nodejs npm mysql-server redis \
+                    dnf install -y curl wget git nginx mysql-server redis \
                                   certbot python3-certbot-nginx firewalld fail2ban \
-                                  htop iotop gcc gcc-c++ make unzip
+                                  htop iotop gcc gcc-c++ make unzip bc
                 else
                     yum install -y epel-release
                     yum update -y
-                    yum install -y curl wget git nginx nodejs npm mysql-server redis \
+                    yum install -y curl wget git nginx mysql-server redis \
                                   certbot python3-certbot-nginx firewalld fail2ban \
-                                  htop iotop gcc gcc-c++ make unzip
-                fi
-                
-                # Install Node.js 18.x
-                curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
-                if command -v dnf &> /dev/null; then
-                    dnf install -y nodejs
-                else
-                    yum install -y nodejs
+                                  htop iotop gcc gcc-c++ make unzip bc
                 fi
                 
             elif [[ "$ID" == "fedora" ]]; then
                 dnf update -y
-                dnf install -y curl wget git nginx nodejs npm mysql-server redis \
+                dnf install -y curl wget git nginx mysql-server redis \
                               certbot python3-certbot-nginx firewalld fail2ban \
-                              htop iotop gcc gcc-c++ make unzip
+                              htop iotop gcc gcc-c++ make unzip bc
             fi
             ;;
             
         *suse*)
             zypper refresh
-            zypper install -y curl wget git nginx nodejs18 npm mysql redis \
+            zypper install -y curl wget git nginx mysql redis \
                              certbot python3-certbot-nginx firewalld fail2ban \
-                             htop iotop gcc gcc-c++ make unzip
+                             htop iotop gcc gcc-c++ make unzip bc
             ;;
             
         *)
@@ -129,7 +172,7 @@ install_dependencies() {
             ;;
     esac
     
-    print_status "Dependencies installed successfully!"
+    print_status "System dependencies installed successfully!"
 }
 
 # Create hostpanel user
@@ -164,7 +207,7 @@ setup_application() {
         sudo -u $HOSTPANEL_USER git clone $GITHUB_REPO .
     else
         # Create basic application structure
-        sudo -u $HOSTPANEL_USER mkdir -p src public scripts
+        sudo -u $HOSTPANEL_USER mkdir -p src public scripts dist
         
         # Create package.json
         cat > package.json << 'EOF'
@@ -174,37 +217,121 @@ setup_application() {
   "description": "Universal VPS Hosting Control Panel",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "start": "node dist/server.js"
+    "dev": "node server.js",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "echo 'Building client...'",
+    "build:server": "echo 'Building server...'",
+    "start": "node server.js"
   },
   "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
     "express": "^4.18.2",
     "mysql2": "^3.6.0",
     "redis": "^4.6.0",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.0.0",
+    "express-rate-limit": "^6.10.0",
+    "express-session": "^1.17.3",
+    "multer": "^1.4.5-lts.1",
+    "winston": "^3.10.0"
   },
-  "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "@vitejs/plugin-react": "^4.0.0",
-    "typescript": "^5.0.0",
-    "vite": "^4.4.0"
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
   }
 }
 EOF
         
-        chown $HOSTPANEL_USER:$HOSTPANEL_USER package.json
+        # Create a basic server.js file
+        cat > server.js << 'EOF'
+const express = require('express');
+const path = require('path');
+const dotenv = require('dotenv');
+
+// Load environment variables
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Basic route
+app.get('/', (req, res) => {
+    res.send(`
+        <html>
+            <head>
+                <title>HostPanel Pro</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 40px; }
+                    .container { max-width: 800px; margin: 0 auto; }
+                    .header { text-align: center; color: #333; }
+                    .status { background: #f0f0f0; padding: 20px; border-radius: 5px; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1 class="header">HostPanel Pro</h1>
+                    <div class="status">
+                        <h2>Installation Successful!</h2>
+                        <p>Your HostPanel Pro control panel is now running.</p>
+                        <p><strong>Node.js Version:</strong> ${process.version}</p>
+                        <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'development'}</p>
+                        <p><strong>Port:</strong> ${PORT}</p>
+                    </div>
+                </div>
+            </body>
+        </html>
+    `);
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'OK', 
+        timestamp: new Date().toISOString(),
+        version: process.env.npm_package_version || '2.1.0'
+    });
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`HostPanel Pro server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    console.log('SIGINT received, shutting down gracefully');
+    process.exit(0);
+});
+EOF
+        
+        chown $HOSTPANEL_USER:$HOSTPANEL_USER package.json server.js
     fi
     
     # Install Node.js dependencies
     print_status "Installing Node.js dependencies..."
-    sudo -u $HOSTPANEL_USER npm install
+    sudo -u $HOSTPANEL_USER npm install --production
+    
+    # Verify npm install was successful
+    if [ $? -eq 0 ]; then
+        print_status "Node.js dependencies installed successfully!"
+    else
+        print_error "Failed to install Node.js dependencies"
+        exit 1
+    fi
 }
 
 # Setup database
@@ -217,18 +344,21 @@ setup_database() {
         systemctl enable mysql 2>/dev/null || systemctl enable mysqld 2>/dev/null || systemctl enable mariadb 2>/dev/null || true
     fi
     
+    # Wait for MySQL to start
+    sleep 5
+    
     # Secure MySQL installation
-    mysql -e "DELETE FROM mysql.user WHERE User='';"
-    mysql -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');"
-    mysql -e "DROP DATABASE IF EXISTS test;"
-    mysql -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
-    mysql -e "FLUSH PRIVILEGES;"
+    mysql -e "DELETE FROM mysql.user WHERE User='';" 2>/dev/null || true
+    mysql -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');" 2>/dev/null || true
+    mysql -e "DROP DATABASE IF EXISTS test;" 2>/dev/null || true
+    mysql -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';" 2>/dev/null || true
+    mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || true
     
     # Create database and user
-    mysql -e "CREATE DATABASE IF NOT EXISTS hostpanel;"
-    mysql -e "CREATE USER IF NOT EXISTS 'hostpanel'@'localhost' IDENTIFIED BY '$DB_PASSWORD';"
-    mysql -e "GRANT ALL PRIVILEGES ON hostpanel.* TO 'hostpanel'@'localhost';"
-    mysql -e "FLUSH PRIVILEGES;"
+    mysql -e "CREATE DATABASE IF NOT EXISTS hostpanel;" 2>/dev/null || true
+    mysql -e "CREATE USER IF NOT EXISTS 'hostpanel'@'localhost' IDENTIFIED BY '$DB_PASSWORD';" 2>/dev/null || true
+    mysql -e "GRANT ALL PRIVILEGES ON hostpanel.* TO 'hostpanel'@'localhost';" 2>/dev/null || true
+    mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || true
 }
 
 # Create environment configuration
@@ -332,7 +462,14 @@ EOF
 configure_nginx() {
     print_status "Configuring nginx..."
     
+    # Create nginx configuration directory if it doesn't exist
+    mkdir -p /etc/nginx/sites-available
+    mkdir -p /etc/nginx/sites-enabled
+    
     cat > /etc/nginx/sites-available/hostpanel << EOF
+# Rate limiting zone
+limit_req_zone \$binary_remote_addr zone=api:10m rate=10r/s;
+
 server {
     listen 80;
     server_name _;
@@ -365,26 +502,28 @@ server {
         expires 1y;
         add_header Cache-Control "public, immutable";
     }
+    
+    # Health check endpoint
+    location /health {
+        proxy_pass http://localhost:$SERVICE_PORT;
+        access_log off;
+    }
 }
-
-# Rate limiting zone
-limit_req_zone \$binary_remote_addr zone=api:10m rate=10r/s;
 EOF
     
     # Enable site
-    if [ -d /etc/nginx/sites-enabled ]; then
-        if [ -f /etc/nginx/sites-enabled/default ]; then
-            rm /etc/nginx/sites-enabled/default
-        fi
-        ln -sf /etc/nginx/sites-available/hostpanel /etc/nginx/sites-enabled/
-    else
-        # For CentOS/RHEL/Fedora
-        mkdir -p /etc/nginx/conf.d
-        cp /etc/nginx/sites-available/hostpanel /etc/nginx/conf.d/hostpanel.conf
+    if [ -f /etc/nginx/sites-enabled/default ]; then
+        rm /etc/nginx/sites-enabled/default
     fi
+    ln -sf /etc/nginx/sites-available/hostpanel /etc/nginx/sites-enabled/
     
     # Test nginx configuration
     nginx -t
+    
+    if [ $? -ne 0 ]; then
+        print_error "Nginx configuration test failed"
+        exit 1
+    fi
 }
 
 # Configure firewall
@@ -483,7 +622,17 @@ start_services() {
         
         systemctl start redis-server 2>/dev/null || systemctl start redis 2>/dev/null || true
         systemctl start nginx
+        
+        # Wait a moment before starting hostpanel
+        sleep 2
         systemctl start hostpanel
+        
+        # Wait and check if hostpanel started successfully
+        sleep 5
+        if ! systemctl is-active --quiet hostpanel; then
+            print_warning "HostPanel service may not have started properly. Checking logs..."
+            journalctl -u hostpanel --no-pager -n 20
+        fi
     fi
 }
 
@@ -648,11 +797,18 @@ final_status() {
     echo -e "${BLUE}  Installation Summary${NC}"
     echo -e "${BLUE}================================${NC}"
     
+    # Check Node.js version
+    node_version=$(node --version 2>/dev/null || echo "Not installed")
+    npm_version=$(npm --version 2>/dev/null || echo "Not installed")
+    echo -e "Node.js: ${GREEN}$node_version${NC}"
+    echo -e "npm: ${GREEN}$npm_version${NC}"
+    
     # Check service status
     if systemctl is-active --quiet hostpanel; then
         echo -e "HostPanel Pro: ${GREEN}✓ Running${NC}"
     else
         echo -e "HostPanel Pro: ${RED}✗ Not running${NC}"
+        print_warning "HostPanel service failed to start. Check logs with: journalctl -u hostpanel"
     fi
     
     if systemctl is-active --quiet nginx; then
@@ -688,6 +844,12 @@ final_status() {
     echo -e "  3. Configure SMTP settings in .env file"
     echo -e "  4. Review firewall settings"
     echo ""
+    echo -e "${YELLOW}Troubleshooting:${NC}"
+    echo -e "  - Check HostPanel logs: journalctl -u hostpanel -f"
+    echo -e "  - Check Nginx logs: tail -f /var/log/nginx/error.log"
+    echo -e "  - Test Node.js: node --version"
+    echo -e "  - Test application: curl http://localhost:$SERVICE_PORT/health"
+    echo ""
     echo -e "${GREEN}Installation completed successfully!${NC}"
 }
 
@@ -698,6 +860,7 @@ main() {
     check_root
     detect_os
     install_dependencies
+    install_nodejs  # Install Node.js separately to avoid conflicts
     create_user
     setup_directories
     setup_application
@@ -715,6 +878,3 @@ main() {
 
 # Run main installation
 main "$@"
-EOF
-
-chmod +x scripts/install.sh

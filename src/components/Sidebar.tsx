@@ -12,7 +12,7 @@ import {
   Archive,
   Wifi,
   Key,
-  Hard Drive
+  HardDrive
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -30,7 +30,7 @@ export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
     { id: 'security', label: 'Security', icon: Shield },
     { id: 'ssl', label: 'SSL/TLS', icon: Key },
     { id: 'backup', label: 'Backup', icon: Archive },
-    { id: 'monitoring', label: 'Monitoring', icon: Hard Drive },
+    { id: 'monitoring', label: 'Monitoring', icon: HardDrive },
     { id: 'network', label: 'Network', icon: Wifi },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];

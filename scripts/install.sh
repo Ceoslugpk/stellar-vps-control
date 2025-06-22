@@ -71,18 +71,39 @@ install_dependencies() {
     case $ID_LIKE in
         *debian*|*ubuntu*)
             apt update
+            # Remove potentially conflicting existing nodejs packages
+            print_status "Removing conflicting nodejs packages..."
+            sudo apt remove --purge libnode-dev nodejs npm -y
+
+            # Add NodeSource repository for Node.js 18.x
+            # https://github.com/nodesource/distributions/blob/master/README.md
+            print_status "Adding NodeSource repository for Node.js 18.x..."
             apt install -y curl wget git nginx nodejs npm mysql-server redis-server \
                           certbot python3-certbot-nginx ufw fail2ban htop iotop \
                           build-essential software-properties-common unzip
             
             # Install Node.js 18.x
+            print_status "Installing Node.js 18.x..."
             curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
             apt install -y nodejs
             ;;
             
         *rhel*|*centos*|*fedora*)
             # Enable EPEL repository for CentOS/RHEL
-            if [[ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ]]; then
+            if [[ "$ID" == "centos" || "$ID" == "rhel" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
+                # Remove potentially conflicting existing nodejs packages
+                print_status "Removing conflicting nodejs packages..."
+                sudo yum remove --purge nodejs npm -y || sudo dnf remove --purge nodejs npm -y
+
+                # Check if it's CentOS 7
+                if [[ "$ID" == "centos" && "$VERSION_ID" == "7" ]]; then
+                    print_warning "Detected CentOS 7. Installing Node.js 12 (LTS) as Node.js 18 requires newer system libraries."
+                    NODE_VERSION_SCRIPT="setup_12.x"
+                else
+                    print_status "Installing Node.js 18.x..."
+                    NODE_VERSION_SCRIPT="setup_18.x"
+                fi
+
                 if command -v dnf &> /dev/null; then
                     dnf install -y epel-release
                     dnf update -y
@@ -97,7 +118,8 @@ install_dependencies() {
                                   htop iotop gcc gcc-c++ make unzip
                 fi
                 
-                # Install Node.js 18.x
+                # Install Node.js using the determined version script
+                print_status "Adding NodeSource repository for Node.js..."
                 curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
                 if command -v dnf &> /dev/null; then
                     dnf install -y nodejs
@@ -106,6 +128,10 @@ install_dependencies() {
                 fi
                 
             elif [[ "$ID" == "fedora" ]]; then
+                # Remove potentially conflicting existing nodejs packages
+                print_status "Removing conflicting nodejs packages..."
+                sudo dnf remove --purge nodejs npm -y
+
                 dnf update -y
                 dnf install -y curl wget git nginx nodejs npm mysql-server redis \
                               certbot python3-certbot-nginx firewalld fail2ban \
@@ -114,6 +140,10 @@ install_dependencies() {
             ;;
             
         *suse*)
+            # Remove potentially conflicting existing nodejs packages
+            print_status "Removing conflicting nodejs packages..."
+            sudo zypper remove --clean-deps nodejs npm -y
+
             zypper refresh
             zypper install -y curl wget git nginx nodejs18 npm mysql redis \
                              certbot python3-certbot-nginx firewalld fail2ban \

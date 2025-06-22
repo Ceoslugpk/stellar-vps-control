@@ -80,28 +80,27 @@ install_dependencies() {
     sudo yum update -y
 
     # Install core dependencies
-    print_status "Installing core dependencies..."
-    sudo yum install -y curl wget git nginx mysql-server redis \\
-                      certbot python3-certbot-nginx firewalld fail2ban \\
-                      htop iotop gcc gcc-c++ make unzip
+ print_status "Installing core dependencies..."
+ sudo yum install -y curl wget git nginx mysql-server redis certbot python3-certbot-nginx firewalld fail2ban htop iotop gcc gcc-c++ make unzip
 
     # Remove potentially conflicting existing nodejs and npm packages
-    print_status \"Removing conflicting Node.js packages...\"\
+    print_status "Removing conflicting Node.js packages..."
     sudo yum remove -y nodejs npm
 
     # Install Node.js based on CentOS version
-    print_status "Adding NodeSource repository for Node.js..."
-    if [[ "$VERSION_ID" == "7" ]]; then
-        print_warning "Detected CentOS 7. Installing Node.js 12 (LTS) as Node.js 18 requires newer system libraries."
-        curl -fsSL https://rpm.nodesource.com/setup_12.x | bash -
-        sudo yum install -y nodejs
-    else
-        print_status \"Installing Node.js 18.x...\"\
-        curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
-        sudo yum install -y nodejs
-    fi
+    case "$VERSION_ID" in
+        "7")
+            print_warning "Detected CentOS 7. Installing Node.js 12 (LTS) as Node.js 18 requires newer system libraries."
+            curl -fsSL https://rpm.nodesource.com/setup_12.x | bash -
+            ;;
+        *)
+            print_status "Installing Node.js 18.x..."
+            curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+            ;;
+    esac
 
-    # Ensure npm is installed
+    # Install Node.js and npm after adding the repository
+    sudo yum install -y nodejs
     sudo yum install -y npm
 
     print_status "Dependencies installed successfully!"

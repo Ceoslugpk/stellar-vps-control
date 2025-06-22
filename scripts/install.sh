@@ -74,11 +74,7 @@ install_dependencies() {
 
     print_status "Installing system dependencies..."
 
-    # Remove potentially conflicting existing nodejs and npm packages
-    print_status "Removing conflicting nodejs packages..."
-    if command -v dnf &> /dev/null; then
-        sudo dnf remove nodejs npm -y
-    else
+ # Remove potentially conflicting existing nodejs and npm packages
         sudo yum remove nodejs npm -y
     fi
 
@@ -107,10 +103,7 @@ install_dependencies() {
     # Install Node.js based on CentOS version
     print_status "Adding NodeSource repository for Node.js..."
     if [[ "$VERSION_ID" == "7" ]]; then
-            # Remove potentially conflicting existing nodejs packages
-            print_status "Removing conflicting nodejs packages..."
-            sudo zypper remove --clean-deps nodejs npm -y
-
+ # This section for zypper seems out of place for a CentOS-only script
             zypper refresh
             zypper install -y curl wget git nginx nodejs18 npm mysql redis \
                              certbot python3-certbot-nginx firewalld fail2ban \
@@ -122,10 +115,7 @@ install_dependencies() {
         print_status "Installing Node.js 18.x..."
         curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
     fi
-    if command -v dnf &> /dev/null; then
-        dnf install -y nodejs
-            exit 1
-    else
+ # Install Node.js after adding the repository
         yum install -y nodejs
     fi
     

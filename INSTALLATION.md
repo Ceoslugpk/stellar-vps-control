@@ -181,10 +181,10 @@ echo "Dependencies installed successfully!"
 #### Quick Install Script
 ```bash
 # Download and run the installation script
-curl -fsSL https://raw.githubusercontent.com/your-repo/hostpanel-pro/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ceoslugpk/stellar-vps-control/main/scripts/install.sh | bash
 
 # OR with wget
-wget -qO- https://raw.githubusercontent.com/your-repo/hostpanel-pro/main/scripts/install.sh | bash
+wget -qO- https://raw.githubusercontent.com/Ceoslugpk/stellar-vps-control/main/scripts/install.sh | bash
 ```
 
 #### Custom Installation Script

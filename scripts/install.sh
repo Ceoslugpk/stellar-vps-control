@@ -77,7 +77,6 @@ install_dependencies() {
  # Remove potentially conflicting existing nodejs and npm packages
         sudo yum remove nodejs npm -y
     fi
-
     # Enable EPEL repository for CentOS
     print_status "Enabling EPEL repository..."
     if command -v dnf &> /dev/null; then
@@ -112,7 +111,6 @@ install_dependencies() {
         print_warning "Detected CentOS 7. Installing Node.js 12 (LTS) as Node.js 18 requires newer system libraries."
         curl -fsSL https://rpm.nodesource.com/setup_12.x | bash -
     else
-        print_status "Installing Node.js 18.x..."
         curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
     fi
  # Install Node.js after adding the repository

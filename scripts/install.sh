@@ -88,14 +88,19 @@ install_dependencies() {
     sudo yum remove -y nodejs npm
 
     # Install Node.js based on CentOS version
+ print_status "Adding NodeSource repository for Node.js..."
     case "$VERSION_ID" in
         "7")
             print_warning "Detected CentOS 7. Installing Node.js 12 (LTS) as Node.js 18 requires newer system libraries."
-            curl -fsSL https://rpm.nodesource.com/setup_12.x | bash -
+ curl -fsSL -o /tmp/nodesource_setup.sh https://rpm.nodesource.com/setup_12.x
+ sudo bash /tmp/nodesource_setup.sh
             ;;
-        *)
-            print_status "Installing Node.js 18.x..."
-            curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+    esac
+ case "$VERSION_ID" in
+        "8" | "9" | *) # For CentOS 8, 9, and other future versions
+ print_status "Installing Node.js 18.x..."
+ curl -fsSL -o /tmp/nodesource_setup.sh https://rpm.nodesource.com/setup_18.x
+ sudo bash /tmp/nodesource_setup.sh
             ;;
     esac
 

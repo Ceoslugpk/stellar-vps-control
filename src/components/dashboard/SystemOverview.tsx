@@ -26,6 +26,21 @@ export const SystemOverview = () => {
     { name: 'FTP Users', value: '8', icon: Users, change: 'No change', trend: 'neutral' },
   ]);
 
+  // Move formatUptime function declaration before it's used
+  const formatUptime = (seconds: number): string => {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    
+    if (days > 0) {
+      return `${days} days, ${hours} hours`;
+    } else if (hours > 0) {
+      return `${hours} hours, ${minutes} minutes`;
+    } else {
+      return `${minutes} minutes`;
+    }
+  };
+
   useEffect(() => {
     const initializeMonitoring = async () => {
       await systemMonitor.startMonitoring(5000);
@@ -56,20 +71,6 @@ export const SystemOverview = () => {
     { label: 'Active Processes', value: metrics ? metrics.processes.toString() : 'Loading...' },
     { label: 'Load Average', value: metrics ? metrics.loadAverage.slice(0, 3).map(l => l.toFixed(2)).join(', ') : 'Loading...' },
   ];
-
-  const formatUptime = (seconds: number): string => {
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    
-    if (days > 0) {
-      return `${days} days, ${hours} hours`;
-    } else if (hours > 0) {
-      return `${hours} hours, ${minutes} minutes`;
-    } else {
-      return `${minutes} minutes`;
-    }
-  };
 
   const getResourceColor = (usage: number) => {
     if (usage > 80) return 'text-red-600';

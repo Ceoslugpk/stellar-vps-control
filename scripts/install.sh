@@ -1,24 +1,20 @@
+
 #!/bin/bash
 # HostPanel Pro - Universal VPS Installation Script
-# Compatible with Ubuntu, Debian, CentOS, Rocky Linux, AlmaLinux, Fedora, OpenSUSEAdd commentMore actions
+# Compatible with Ubuntu, Debian, CentOS, Rocky Linux, AlmaLinux, Fedora, OpenSUSE
 
 set -e
 
-# --- Configuration ---
 # Configuration
 HOSTPANEL_USER="hostpanel"
 HOSTPANEL_DIR="/opt/hostpanel"
 SERVICE_PORT="3000"
-DB_PASSWORD=$(openssl rand -base64 32 | tr -d '=\+\/')
 DOMAIN=""
 DB_PASSWORD=$(openssl rand -base64 32)
 JWT_SECRET=$(openssl rand -base64 64)
 SESSION_SECRET=$(openssl rand -base64 64)
 ENCRYPTION_KEY=$(openssl rand -base64 32)
-# The GITHUB_REPO environment variable can be set to clone a specific repo.
-# Example: export GITHUB_REPO="https://github.com/user/repo.git"
 
-# --- Colors for output ---
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -26,26 +22,23 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# --- Helper Functions ---
 print_status() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
-@@ -37,134 +36,134 @@ print_error() {
+
+print_warning() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
 
 print_header() {
     echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}   HostPanel Pro Installation   ${NC}"
     echo -e "${BLUE}  HostPanel Pro Installation${NC}"
     echo -e "${BLUE}================================${NC}"
     echo ""
-}
-
-# --- Pre-flight Checks ---
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-       print_error "This script must be run as root or with sudo."
-       exit 1
-    fi
 }
 
 # Detect OS and distribution
@@ -53,20 +46,16 @@ detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         OS=$NAME
-        VERSION_ID=$VERSION_ID
+        VERSION=$VERSION_ID
         ID_LIKE=${ID_LIKE:-$ID}
-        ID=$ID
     else
-        print_error "Cannot detect operating system. Exiting."
         print_error "Cannot detect OS. Please install manually."
         exit 1
     fi
-    print_status "Detected OS: $OS $VERSION_ID"
     
     print_status "Detected OS: $OS $VERSION"
 }
 
-# --- Installation Steps ---
 # Check if running as root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -77,102 +66,76 @@ check_root() {
 
 # Install dependencies based on distribution
 install_dependencies() {
-    print_status "Updating package lists and installing system dependencies..."
-
-    case "$ID_LIKE" in
+    print_status "Installing system dependencies..."
+    
+    case $ID_LIKE in
         *debian*|*ubuntu*)
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -y
-            apt-get install -y curl wget git nginx mariadb-server redis-server certbot python3-certbot-nginx firewalld fail2ban htop iotop build-essential unzip
+            apt update
+            apt install -y curl wget git nginx nodejs npm mysql-server redis-server \
+                          certbot python3-certbot-nginx ufw fail2ban htop iotop \
+                          build-essential software-properties-common unzip
             
-            print_status "Installing Node.js v18..."
-            curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-            apt-get install -y nodejs
+            # Install Node.js 18.x
+            curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+            apt install -y nodejs
             ;;
-        *rhel*|*fedora*|*centos*)
-            # For CentOS, Rocky, AlmaLinux, Fedora
-            yum update -y
-            yum install -y epel-release || true # Fails gracefully if not needed
             
-            # CentOS 7 has different package names and requirements
-            if [[ "$VERSION_ID" == "7" ]]; then
-                print_warning "Detected CentOS 7. Using compatible packages (python2-certbot, nodejs-16)."
-                yum install -y curl wget git nginx mariadb-server redis certbot python2-certbot-nginx firewalld fail2ban htop iotop gcc gcc-c++ make unzip
+        *rhel*|*centos*|*fedora*)
+            # Enable EPEL repository for CentOS/RHEL
+            if [[ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ]]; then
+                if command -v dnf &> /dev/null; then
+                    dnf install -y epel-release
+                    dnf update -y
+                    dnf install -y curl wget git nginx nodejs npm mysql-server redis \
+                                  certbot python3-certbot-nginx firewalld fail2ban \
+                                  htop iotop gcc gcc-c++ make unzip
+                else
+                    yum install -y epel-release
+                    yum update -y
+                    yum install -y curl wget git nginx nodejs npm mysql-server redis \
+                                  certbot python3-certbot-nginx firewalld fail2ban \
+                                  htop iotop gcc gcc-c++ make unzip
+                fi
                 
-                print_status "Installing Node.js v16 (LTS for CentOS 7 compatibility)..."
-                curl -fsSL https://rpm.nodesource.com/setup_16.x | sudo -E bash -
-            else
-                yum install -y curl wget git nginx mariadb-server redis certbot python3-certbot-nginx firewalld fail2ban htop iotop gcc gcc-c++ make unzip
+                # Install Node.js 18.x
+                curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+                if command -v dnf &> /dev/null; then
+                    dnf install -y nodejs
+                else
+                    yum install -y nodejs
+                fi
                 
-                print_status "Installing Node.js v18..."
-                curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo -E bash -
+            elif [[ "$ID" == "fedora" ]]; then
+                dnf update -y
+                dnf install -y curl wget git nginx nodejs npm mysql-server redis \
+                              certbot python3-certbot-nginx firewalld fail2ban \
+                              htop iotop gcc gcc-c++ make unzip
             fi
-            
-            yum remove -y nodejs npm # Remove conflicting old versions
-            yum install -y nodejs
             ;;
+            
         *suse*)
             zypper refresh
-            zypper install -y curl wget git nginx mariadb redis certbot python3-certbot-nginx firewalld fail2ban htop iotop gcc make unzip patterns-devel-base_basis
-            
-            print_status "Installing Node.js v18..."
-            zypper remove -y nodejs npm
-            curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo -E bash -
-            zypper install -y nodejs
- # Check if the OS is CentOS
-    if [ "$ID" != "centos" ]; then
-        print_error "This script is only compatible with CentOS. Detected OS: $OS"
-        exit 1
-    fi
-
-    print_status "Installing system dependencies..."
-    # Enable EPEL repository for CentOS
-    print_status "Enabling EPEL repository..."
-    sudo yum install -y epel-release
-    sudo yum update -y
-
-    # Install core dependencies
-    print_status "Installing core dependencies..."
-    sudo yum install -y curl wget git nginx mysql-server redis certbot python3-certbot-nginx firewalld fail2ban htop iotop gcc gcc-c++ make unzip
-
-    # Remove potentially conflicting existing nodejs and npm packages
-    print_status "Removing conflicting Node.js packages..."
-    sudo yum remove -y nodejs npm
-
-    # Install Node.js based on CentOS version
-    print_status "Adding NodeSource repository for Node.js..."
-    case "$VERSION_ID" in # Corrected case statement
-        "7")
-            print_warning "Detected CentOS 7. Installing Node.js 12 (LTS) as Node.js 18 requires newer system libraries."
-            curl -fsSL -o /tmp/nodesource_setup.sh https://rpm.nodesource.com/setup_12.x
-            sudo bash /tmp/nodesource_setup.sh
+            zypper install -y curl wget git nginx nodejs18 npm mysql redis \
+                             certbot python3-certbot-nginx firewalld fail2ban \
+                             htop iotop gcc gcc-c++ make unzip
             ;;
+            
         *)
-            print_error "Unsupported distribution: $OS"
+            print_error "Unsupported OS: $OS"
+            print_error "Please install dependencies manually:"
+            print_error "- Node.js 18.x, npm, nginx, mysql-server, redis"
+            print_error "- certbot, fail2ban, build tools"
             exit 1
-        *) # For CentOS 8, 9, and other future versions
-            print_status "Installing Node.js 18.x..."
-            curl -fsSL -o /tmp/nodesource_setup.sh https://rpm.nodesource.com/setup_18.x
- sudo bash /tmp/nodesource_setup.sh
             ;;
     esac
-
-    print_status "Dependencies installed successfully."
-    # Install Node.js and npm after adding the repository
-    sudo yum install -y nodejs
-    sudo yum install -y npm
-
+    
     print_status "Dependencies installed successfully!"
 }
 
 # Create hostpanel user
 create_user() {
-    print_status "Creating dedicated user '$HOSTPANEL_USER'..."
     print_status "Creating hostpanel user..."
     if ! id "$HOSTPANEL_USER" &>/dev/null; then
-        useradd -m -s /bin/bash "$HOSTPANEL_USER"
-        # Grant sudo for specific tasks if needed, wheel for RHEL/SUSE, sudo for Debian
-        usermod -aG sudo "$HOSTPANEL_USER" 2>/dev/null || usermod -aG wheel "$HOSTPANEL_USER"
         useradd -m -s /bin/bash $HOSTPANEL_USER
         usermod -aG sudo $HOSTPANEL_USER 2>/dev/null || usermod -aG wheel $HOSTPANEL_USER 2>/dev/null || true
     fi
@@ -180,15 +143,12 @@ create_user() {
 
 # Setup directories
 setup_directories() {
-    print_status "Setting up application directories..."
-    mkdir -p "$HOSTPANEL_DIR" /var/log/hostpanel /var/backups/hostpanel /var/www/html
     print_status "Setting up directories..."
     mkdir -p $HOSTPANEL_DIR
     mkdir -p /var/log/hostpanel
     mkdir -p /var/backups/hostpanel
     mkdir -p /var/www/html
-
-    chown -R "$HOSTPANEL_USER:$HOSTPANEL_USER" "$HOSTPANEL_DIR" /var/log/hostpanel /var/backups/hostpanel
+    
     chown $HOSTPANEL_USER:$HOSTPANEL_USER $HOSTPANEL_DIR
     chown $HOSTPANEL_USER:$HOSTPANEL_USER /var/log/hostpanel
     chown $HOSTPANEL_USER:$HOSTPANEL_USER /var/backups/hostpanel
@@ -198,27 +158,20 @@ setup_directories() {
 setup_application() {
     print_status "Setting up HostPanel Pro application..."
     cd $HOSTPANEL_DIR
-
+    
     # If this is a git repository, clone it
     if [ -n "$GITHUB_REPO" ]; then
-        print_status "Cloning from GITHUB_REPO: $GITHUB_REPO"
-        sudo -u "$HOSTPANEL_USER" git clone "$GITHUB_REPO" "$HOSTPANEL_DIR"
         sudo -u $HOSTPANEL_USER git clone $GITHUB_REPO .
     else
-        print_status "Creating boilerplate application structure..."
-        sudo -u "$HOSTPANEL_USER" mkdir -p "$HOSTPANEL_DIR"/{src,public,scripts}
         # Create basic application structure
         sudo -u $HOSTPANEL_USER mkdir -p src public scripts
-
-        # Create a basic package.json
-        sudo -u "$HOSTPANEL_USER" tee "$HOSTPANEL_DIR/package.json" > /dev/null << 'EOF'
+        
         # Create package.json
         cat > package.json << 'EOF'
 {
   "name": "hostpanel-pro",
   "version": "2.1.0",
   "description": "Universal VPS Hosting Control Panel",
-  "main": "dist/server.js",
   "main": "dist/index.js",
   "scripts": {
     "dev": "vite",
@@ -227,14 +180,8 @@ setup_application() {
     "start": "node dist/server.js"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "jsonwebtoken": "^9.0.2",
-    "mysql2": "^3.6.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "redis": "^4.6.0"
     "express": "^4.18.2",
     "mysql2": "^3.6.0",
     "redis": "^4.6.0",
@@ -244,52 +191,40 @@ setup_application() {
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
-@@ -175,43 +174,48 @@ setup_application() {
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^4.4.0"
   }
 }
 EOF
         
         chown $HOSTPANEL_USER:$HOSTPANEL_USER package.json
     fi
-
+    
     # Install Node.js dependencies
     print_status "Installing Node.js dependencies..."
-    cd "$HOSTPANEL_DIR"
-    sudo -u "$HOSTPANEL_USER" npm install
     sudo -u $HOSTPANEL_USER npm install
 }
 
 # Setup database
 setup_database() {
-    print_status "Starting and configuring database..."
     print_status "Configuring database..."
-
-    # Start and enable MariaDB/MySQL
-    systemctl enable mariadb --now 2>/dev/null || systemctl enable mysql --now 2>/dev/null || systemctl enable mysqld --now
+    
     # Start MySQL service  
     if command -v systemctl &> /dev/null; then
         systemctl start mysql 2>/dev/null || systemctl start mysqld 2>/dev/null || systemctl start mariadb 2>/dev/null || true
         systemctl enable mysql 2>/dev/null || systemctl enable mysqld 2>/dev/null || systemctl enable mariadb 2>/dev/null || true
     fi
-
-    # Basic non-interactive security
-    print_status "Securing database and creating application user..."
-    mysql -u root -e "DELETE FROM mysql.user WHERE User='';"
-    mysql -u root -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');"
-    mysql -u root -e "DROP DATABASE IF EXISTS test;"
-    mysql -u root -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
+    
     # Secure MySQL installation
     mysql -e "DELETE FROM mysql.user WHERE User='';"
     mysql -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');"
     mysql -e "DROP DATABASE IF EXISTS test;"
     mysql -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
     mysql -e "FLUSH PRIVILEGES;"
-
+    
     # Create database and user
-    mysql -u root -e "CREATE DATABASE IF NOT EXISTS hostpanel;"
-    mysql -u root -e "CREATE USER IF NOT EXISTS 'hostpanel'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
-    mysql -u root -e "GRANT ALL PRIVILEGES ON hostpanel.* TO 'hostpanel'@'localhost';"
-    mysql -u root -e "FLUSH PRIVILEGES;"
     mysql -e "CREATE DATABASE IF NOT EXISTS hostpanel;"
     mysql -e "CREATE USER IF NOT EXISTS 'hostpanel'@'localhost' IDENTIFIED BY '$DB_PASSWORD';"
     mysql -e "GRANT ALL PRIVILEGES ON hostpanel.* TO 'hostpanel'@'localhost';"
@@ -298,27 +233,37 @@ setup_database() {
 
 # Create environment configuration
 create_env_config() {
-    print_status "Creating environment configuration file..."
-    local IP_ADDRESS
-    IP_ADDRESS=$(hostname -I | awk '{print $1}')
-
-    tee "$HOSTPANEL_DIR/.env" > /dev/null << EOF
     print_status "Creating environment configuration..."
     
     cat > $HOSTPANEL_DIR/.env << EOF
 # Application Settings
 NODE_ENV=production
 PORT=$SERVICE_PORT
-APP_URL=http://${DOMAIN:-$IP_ADDRESS}
 APP_URL=http://$(hostname -I | awk '{print $1}'):$SERVICE_PORT
 APP_NAME="HostPanel Pro"
 
 # Database Configuration
-@@ -236,62 +240,82 @@ SMTP_HOST=
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=hostpanel
+DB_USER=hostpanel
+DB_PASSWORD=$DB_PASSWORD
+
+# Redis Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# Security Settings
+JWT_SECRET=$JWT_SECRET
+SESSION_SECRET=$SESSION_SECRET
+ENCRYPTION_KEY=$ENCRYPTION_KEY
+
+# Email Configuration (Configure with your SMTP settings)
+SMTP_HOST=
 SMTP_PORT=587
 SMTP_USER=
 SMTP_PASS=
-SMTP_FROM="HostPanel Pro <noreply@${DOMAIN:-$IP_ADDRESS}>"
 SMTP_FROM="HostPanel Pro <noreply@$(hostname -f)>"
 
 # SSL Configuration
@@ -342,24 +287,18 @@ API_RATE_WINDOW=900
 MAX_FILE_SIZE=100MB
 UPLOAD_PATH=/var/www/uploads
 EOF
-
-    chown "$HOSTPANEL_USER:$HOSTPANEL_USER" "$HOSTPANEL_DIR/.env"
-    chmod 600 "$HOSTPANEL_DIR/.env"
+    
     chown $HOSTPANEL_USER:$HOSTPANEL_USER $HOSTPANEL_DIR/.env
     chmod 600 $HOSTPANEL_DIR/.env
 }
 
 # Create systemd service
 create_systemd_service() {
-    print_status "Creating systemd service for HostPanel..."
-    tee /etc/systemd/system/hostpanel.service > /dev/null << EOF
     print_status "Creating systemd service..."
     
     cat > /etc/systemd/system/hostpanel.service << EOF
 [Unit]
 Description=HostPanel Pro Control Panel
-After=network.target mariadb.service redis.service
-Wants=mariadb.service redis.service
 After=network.target mysql.service redis.service
 Wants=mysql.service redis.service
 
@@ -368,7 +307,6 @@ Type=simple
 User=$HOSTPANEL_USER
 Group=$HOSTPANEL_USER
 WorkingDirectory=$HOSTPANEL_DIR
-ExecStart=$(command -v npm) start
 ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=10
@@ -376,12 +314,10 @@ Environment=NODE_ENV=production
 Environment=PORT=$SERVICE_PORT
 EnvironmentFile=$HOSTPANEL_DIR/.env
 
-# Security Hardening
 # Security settings
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=$HOSTPANEL_DIR /var/log/hostpanel /var/backups/hostpanel /var/www
 ReadWritePaths=$HOSTPANEL_DIR
 ReadWritePaths=/var/log/hostpanel
 ReadWritePaths=/var/backups/hostpanel
@@ -394,44 +330,35 @@ EOF
 
 # Configure nginx
 configure_nginx() {
-    print_status "Configuring Nginx reverse proxy..."
-    
-    # Define server name based on user input or IP
-    local SERVER_NAME="${DOMAIN:-_}"
     print_status "Configuring nginx..."
-
-    local NGINX_CONF_CONTENT
-    NGINX_CONF_CONTENT=$(cat <<EOF
-# Rate limiting zone, defined once
-limit_req_zone \$binary_remote_addr zone=api:10m rate=10r/s;
-
+    
     cat > /etc/nginx/sites-available/hostpanel << EOF
 server {
     listen 80;
-    server_name ${SERVER_NAME};
     server_name _;
     
     # Security headers
-    add_header X-Frame-Options "SAMEORIGIN";
-    add_header X-Content-Type-Options "nosniff";
     add_header X-Frame-Options DENY;
     add_header X-Content-Type-Options nosniff;
     add_header X-XSS-Protection "1; mode=block";
     add_header Referrer-Policy "strict-origin-when-cross-origin";
     
-@@ -305,202 +329,329 @@ server {
+    location / {
+        proxy_pass http://localhost:$SERVICE_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_cache_bypass \$http_upgrade;
-        proxy_read_timeout 900s; # 15 minutes
         proxy_read_timeout 86400;
         
-        # Apply rate limiting
         # Rate limiting
         limit_req zone=api burst=20 nodelay;
     }
     
-    # Static file handling (optional, if your app serves static files)
     # Static file handling
     location /static/ {
         alias $HOSTPANEL_DIR/public/;
@@ -439,13 +366,7 @@ server {
         add_header Cache-Control "public, immutable";
     }
 }
-EOF
-)
 
-    if [ -d /etc/nginx/sites-available ]; then
-        # Debian/Ubuntu style
-        echo "$NGINX_CONF_CONTENT" > /etc/nginx/sites-available/hostpanel
-        rm -f /etc/nginx/sites-enabled/default
 # Rate limiting zone
 limit_req_zone \$binary_remote_addr zone=api:10m rate=10r/s;
 EOF
@@ -457,17 +378,11 @@ EOF
         fi
         ln -sf /etc/nginx/sites-available/hostpanel /etc/nginx/sites-enabled/
     else
-        # RHEL/SUSE style
-        echo "$NGINX_CONF_CONTENT" > /etc/nginx/conf.d/hostpanel.conf
-        # Safely remove default config if it exists
-        rm -f /etc/nginx/conf.d/default.conf
         # For CentOS/RHEL/Fedora
         mkdir -p /etc/nginx/conf.d
         cp /etc/nginx/sites-available/hostpanel /etc/nginx/conf.d/hostpanel.conf
     fi
-
-    print_status "Testing Nginx configuration..."
-    sudo nginx -t
+    
     # Test nginx configuration
     nginx -t
 }
@@ -475,37 +390,51 @@ EOF
 # Configure firewall
 configure_firewall() {
     print_status "Configuring firewall..."
-    systemctl enable firewalld --now
-
-    # CentOS firewall
-    systemctl enable firewalld
-    systemctl start firewalld
-    firewall-cmd --permanent --add-service=ssh
-    firewall-cmd --permanent --add-service=http
-    firewall-cmd --permanent --add-service=https
-    firewall-cmd --permanent --add-service=ftp
-    firewall-cmd --permanent --add-service=smtp
-    firewall-cmd --permanent --add-service=pop3
-    firewall-cmd --permanent --add-service=imap
-    firewall-cmd --permanent --add-port=587/tcp
-    firewall-cmd --permanent --add-port=465/tcp
-    firewall-cmd --permanent --add-port=993/tcp
-    firewall-cmd --permanent --add-port=995/tcp
-    firewall-cmd --reload
     
-    print_warning "Firewall enabled for SSH, HTTP, and HTTPS. Review and add other ports if needed."
+    if command -v ufw &> /dev/null; then
+        # Ubuntu/Debian firewall
+        ufw --force reset
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow ssh
+        ufw allow http
+        ufw allow https
+        ufw allow 21/tcp   # FTP
+        ufw allow 25/tcp   # SMTP
+        ufw allow 53       # DNS
+        ufw allow 110/tcp  # POP3
+        ufw allow 143/tcp  # IMAP
+        ufw allow 465/tcp  # SMTPS
+        ufw allow 587/tcp  # SMTP Submission
+        ufw allow 993/tcp  # IMAPS
+        ufw allow 995/tcp  # POP3S
+        ufw --force enable
+        
+    elif command -v firewall-cmd &> /dev/null; then
+        # CentOS/RHEL/Fedora firewall
+        systemctl enable firewalld
+        systemctl start firewalld
+        firewall-cmd --permanent --add-service=ssh
+        firewall-cmd --permanent --add-service=http
+        firewall-cmd --permanent --add-service=https
+        firewall-cmd --permanent --add-service=ftp
+        firewall-cmd --permanent --add-service=smtp
+        firewall-cmd --permanent --add-service=pop3
+        firewall-cmd --permanent --add-service=imap
+        firewall-cmd --permanent --add-port=587/tcp
+        firewall-cmd --permanent --add-port=465/tcp
+        firewall-cmd --permanent --add-port=993/tcp
+        firewall-cmd --permanent --add-port=995/tcp
+        firewall-cmd --reload
+    fi
 }
 
 # Setup fail2ban
 setup_fail2ban() {
-    print_status "Configuring Fail2Ban..."
-    tee /etc/fail2ban/jail.local > /dev/null << 'EOF'
     print_status "Configuring fail2ban..."
     
     cat > /etc/fail2ban/jail.local << 'EOF'
 [DEFAULT]
-bantime = 1h
-findtime = 10m
 bantime = 3600
 findtime = 600
 maxretry = 5
@@ -533,26 +462,17 @@ port = http,https
 logpath = /var/log/hostpanel/access.log
 maxretry = 5
 EOF
-
-    systemctl enable fail2ban --now
+    
     if command -v systemctl &> /dev/null; then
         systemctl enable fail2ban
         systemctl start fail2ban
     fi
 }
 
-setup_wordpress_installer() {
-    print_status "Setting up WordPress one-click installer..."
 # Start services
 start_services() {
     print_status "Starting services..."
-
-    # Determine web server user
-    local WEB_USER="www-data" # Default for Debian/Ubuntu
-    case "$ID_LIKE" in
-        *rhel*|*fedora*|*centos*|*suse*) WEB_USER="nginx" ;;
-    esac
-    print_status "Detected web server user as: $WEB_USER"
+    
     if command -v systemctl &> /dev/null; then
         systemctl daemon-reload
         
@@ -567,35 +487,23 @@ start_services() {
     fi
 }
 
-    local WP_INSTALLER_DIR="$HOSTPANEL_DIR/installers/wordpress"
-    mkdir -p "$WP_INSTALLER_DIR"
 # Create WordPress files for auto-installer
 setup_wordpress_installer() {
     print_status "Setting up WordPress auto-installer..."
     
     mkdir -p $HOSTPANEL_DIR/installers/wordpress
     cd $HOSTPANEL_DIR/installers/wordpress
-
-    print_status "Downloading latest WordPress..."
-    wget -qO- https://wordpress.org/latest.tar.gz | tar -xz -C "$WP_INSTALLER_DIR"
+    
     # Download latest WordPress
     wget https://wordpress.org/latest.tar.gz
     tar -xzf latest.tar.gz
     rm latest.tar.gz
-
-    # Create the installer script
-    tee "$WP_INSTALLER_DIR/install-wordpress.sh" > /dev/null <<EOF
+    
     # Create WordPress installer script
     cat > install-wordpress.sh << 'EOF'
 #!/bin/bash
 # WordPress Installation Script for HostPanel Pro
-set -e
 
-DOMAIN="\$1"
-INSTALL_PATH="/var/www/html/\$DOMAIN"
-
-if [ -z "\$DOMAIN" ]; then
-    echo "Usage: \$0 <domain-name>"
 DOMAIN=$1
 PATH_INSTALL=$2
 DB_NAME=$3
@@ -610,9 +518,6 @@ if [ -z "$DOMAIN" ] || [ -z "$DB_NAME" ]; then
     exit 1
 fi
 
-mkdir -p "\$INSTALL_PATH"
-cp -r ${WP_INSTALLER_DIR}/wordpress/* "\$INSTALL_PATH/"
-cd "\$INSTALL_PATH"
 INSTALL_DIR="/var/www/html/$DOMAIN$PATH_INSTALL"
 mkdir -p "$INSTALL_DIR"
 
@@ -624,12 +529,8 @@ cd "$INSTALL_DIR"
 cp wp-config-sample.php wp-config.php
 
 # Generate salts
-SALTS=\$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)
-sed -i "/put your unique phrase here/c\\\$SALTS" wp-config.php
 SALTS=$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)
 
-# Note: DB credentials must be configured manually in wp-config.php by the user
-# or passed as arguments to a more advanced version of this script.
 # Update wp-config.php
 sed -i "s/database_name_here/$DB_NAME/" wp-config.php
 sed -i "s/username_here/$DB_USER/" wp-config.php
@@ -637,19 +538,13 @@ sed -i "s/password_here/$DB_PASS/" wp-config.php
 sed -i "/put your unique phrase here/c\\$SALTS" wp-config.php
 
 # Set permissions
-chown -R ${WEB_USER}:${WEB_USER} "\$INSTALL_PATH"
-find "\$INSTALL_PATH" -type d -exec chmod 755 {} \\;
-find "\$INSTALL_PATH" -type f -exec chmod 644 {} \\;
 chown -R www-data:www-data "$INSTALL_DIR"
 find "$INSTALL_DIR" -type d -exec chmod 755 {} \;
 find "$INSTALL_DIR" -type f -exec chmod 644 {} \;
 
-echo "WordPress files installed for \$DOMAIN. Configure wp-config.php and your web server."
 echo "WordPress installed successfully at $INSTALL_DIR"
 EOF
-
-    chmod +x "$WP_INSTALLER_DIR/install-wordpress.sh"
-    chown -R "$HOSTPANEL_USER:$HOSTPANEL_USER" "$HOSTPANEL_DIR/installers"
+    
     chmod +x install-wordpress.sh
     chown -R $HOSTPANEL_USER:$HOSTPANEL_USER $HOSTPANEL_DIR/installers
 }
@@ -665,9 +560,6 @@ create_maintenance_scripts() {
 #!/bin/bash
 # HostPanel Pro - System Monitoring Script
 
-start_services() {
-    print_status "Reloading systemd, enabling and starting services..."
-    systemctl daemon-reload
 LOGFILE="/var/log/hostpanel/monitor.log"
 THRESHOLD_CPU=80
 THRESHOLD_MEMORY=80
@@ -738,10 +630,7 @@ find $BACKUP_DIR -name "*.gz" -mtime +$RETENTION_DAYS -delete
 
 echo "Backup completed: $DATE"
 EOF
-
-    systemctl enable redis --now 2>/dev/null || systemctl enable redis-server --now
-    systemctl enable nginx --now
-    systemctl enable hostpanel --now
+    
     chmod +x $HOSTPANEL_DIR/scripts/*.sh
     chown -R $HOSTPANEL_USER:$HOSTPANEL_USER $HOSTPANEL_DIR/scripts
     
@@ -750,79 +639,39 @@ EOF
     (crontab -l 2>/dev/null; echo "*/5 * * * * $HOSTPANEL_DIR/scripts/monitor.sh") | crontab -
 }
 
-final_summary() {
-    print_status "Finalizing installation..."
 # Final status check and summary
 final_status() {
     print_status "Installation completed! Checking services..."
-
+    
     echo ""
     echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}    Installation Summary        ${NC}"
     echo -e "${BLUE}  Installation Summary${NC}"
     echo -e "${BLUE}================================${NC}"
-
-    # Check service statuses
-    for service in hostpanel nginx mariadb redis fail2ban; do
-        if systemctl is-active --quiet "$service" || \
-           ( [[ "$service" == "mariadb" ]] && (systemctl is-active --quiet "mysql" || systemctl is-active --quiet "mysqld") ) || \
-           ( [[ "$service" == "redis" ]] && systemctl is-active --quiet "redis-server" ); then
-            echo -e " ✓ $service: ${GREEN}Active${NC}"
-        else
-            echo -e " ✗ $service: ${RED}Inactive${NC}"
-        fi
-    done
+    
     # Check service status
     if systemctl is-active --quiet hostpanel; then
         echo -e "HostPanel Pro: ${GREEN}✓ Running${NC}"
     else
         echo -e "HostPanel Pro: ${RED}✗ Not running${NC}"
     fi
-
-    local IP_ADDRESS
-    IP_ADDRESS=$(hostname -I | awk '{print $1}')
-
-    echo ""
-    echo -e "${GREEN}Access your HostPanel Pro instance at:${NC}"
-    if [ -n "$DOMAIN" ]; then
-        echo -e "  => ${BLUE}http://${DOMAIN}${NC}"
+    
     if systemctl is-active --quiet nginx; then
         echo -e "Nginx: ${GREEN}✓ Running${NC}"
     else
-        echo -e "  => ${BLUE}http://${IP_ADDRESS}${NC}"
         echo -e "Nginx: ${RED}✗ Not running${NC}"
     fi
-
-    echo ""
-    echo -e "${YELLOW}IMPORTANT NOTES & CREDENTIALS:${NC}"
-    echo -e "  - HostPanel Directory: ${HOSTPANEL_DIR}"
-    echo -e "  - Environment Config:  ${HOSTPANEL_DIR}/.env"
-    echo -e "  - Database Password:   ${DB_PASSWORD} (Saved in .env)"
+    
     if systemctl is-active --quiet mysql; then
         echo -e "MySQL: ${GREEN}✓ Running${NC}"
     else
         echo -e "MySQL: ${RED}✗ Not running${NC}"
     fi
-
-    echo ""
-    echo -e "${YELLOW}RECOMMENDED NEXT STEPS:${NC}"
-    if [ -n "$DOMAIN" ]; then
-        echo -e "  1. Point your domain's DNS A record to: ${IP_ADDRESS}"
-        echo -e "  2. Secure your site with an SSL certificate:"
-        if [[ "$VERSION_ID" == "7" ]]; then
-            echo -e "     ${GREEN}sudo certbot --nginx -d ${DOMAIN}${NC}"
-        else
-            echo -e "     ${GREEN}sudo certbot --nginx -d ${DOMAIN}${NC}"
-        fi
+    
     if systemctl is-active --quiet redis-server || systemctl is-active --quiet redis; then
         echo -e "Redis: ${GREEN}✓ Running${NC}"
     else
-        echo -e "  1. To use a domain name, re-run this script or manually edit:"
-        echo -e "     - ${HOSTPANEL_DIR}/.env (update APP_URL)"
-        echo -e "     - Your Nginx config file (update server_name)"
         echo -e "Redis: ${RED}✗ Not running${NC}"
     fi
-    echo -e "  3. Configure your SMTP mail settings in ${HOSTPANEL_DIR}/.env"
     
     echo ""
     echo -e "${GREEN}Access your control panel at:${NC}"
@@ -842,27 +691,25 @@ final_status() {
     echo -e "${GREEN}Installation completed successfully!${NC}"
 }
 
-# --- Main Execution Logic ---
 # Main installation process
 main() {
     print_header
-
-    read -p "Enter the domain name for HostPanel (e.g., panel.example.com) or leave blank to use IP: " DOMAIN
     
     check_root
     detect_os
-    
     install_dependencies
     create_user
     setup_directories
-@@ -512,9 +663,13 @@ main() {
+    setup_application
+    setup_database
+    create_env_config
+    create_systemd_service
+    configure_nginx
     configure_firewall
     setup_fail2ban
     setup_wordpress_installer
-    
     create_maintenance_scripts
     start_services
-    final_summary
     final_status
 }
 

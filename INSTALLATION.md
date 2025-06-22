@@ -1,192 +1,457 @@
 
-# HostPanel Pro - Installation Guide
+# HostPanel Pro - Universal VPS Installation Guide
 
-A comprehensive web hosting control panel application that replicates the core functionalities of cPanel and Plesk, designed for VPS deployment.
+A comprehensive web hosting control panel application designed for universal VPS deployment across all major providers and Linux distributions.
+
+## VPS Compatibility Matrix
+
+### Supported VPS Providers
+- ✅ **DigitalOcean** (Droplets)
+- ✅ **Linode** (Linodes)
+- ✅ **Vultr** (Cloud Compute)
+- ✅ **AWS EC2** (Amazon Linux, Ubuntu)
+- ✅ **Google Cloud Platform** (Compute Engine)
+- ✅ **Microsoft Azure** (Virtual Machines)
+- ✅ **Hetzner Cloud**
+- ✅ **OVHcloud**
+- ✅ **Contabo**
+- ✅ **Hostinger VPS**
+- ✅ **Any KVM/OpenVZ VPS**
+
+### Supported Operating Systems
+- ✅ **Ubuntu** 18.04, 20.04, 22.04, 24.04 LTS
+- ✅ **Debian** 10 (Buster), 11 (Bullseye), 12 (Bookworm)
+- ✅ **CentOS** 7, 8, Stream 8, Stream 9
+- ✅ **Rocky Linux** 8, 9
+- ✅ **AlmaLinux** 8, 9
+- ✅ **RHEL** 8, 9
+- ✅ **Fedora** 35, 36, 37, 38
+- ✅ **OpenSUSE Leap** 15.4, 15.5
 
 ## System Requirements
 
-### Minimum Requirements
-- **OS**: Ubuntu 20.04 LTS, Debian 11, or CentOS 8
-- **CPU**: 2 cores
-- **RAM**: 4 GB
-- **Storage**: 20 GB free space
-- **Network**: Public IP address
-
-### Recommended Requirements
-- **OS**: Ubuntu 22.04 LTS (recommended)
-- **CPU**: 4 cores
-- **RAM**: 8 GB
-- **Storage**: 50 GB SSD
-- **Network**: Public IP with reverse DNS
-
-## Prerequisites
-
-Before installing HostPanel Pro, ensure your system has the following:
-
-```bash
-# Update system packages
-sudo apt update && sudo apt upgrade -y
-
-# Install required system packages
-sudo apt install -y curl wget git nginx nodejs npm certbot python3-certbot-nginx ufw fail2ban
+### Minimum VPS Specifications
+```
+CPU: 1 vCPU (2.4 GHz)
+RAM: 2 GB
+Storage: 20 GB SSD
+Network: 1 Gbps
+OS: Any supported Linux distribution
+Root/Sudo access: Required
 ```
 
-## Installation Steps
+### Recommended VPS Specifications
+```
+CPU: 2+ vCPU (2.4+ GHz)
+RAM: 4+ GB
+Storage: 40+ GB NVMe SSD
+Network: 1+ Gbps
+Backup: Weekly automated backups
+Monitoring: Basic server monitoring
+```
 
-### Step 1: System Preparation
+### Production VPS Specifications
+```
+CPU: 4+ vCPU (3.0+ GHz)
+RAM: 8+ GB
+Storage: 80+ GB NVMe SSD
+Network: 10+ Gbps
+Backup: Daily automated backups
+Monitoring: Advanced monitoring with alerts
+Load Balancer: Optional for high availability
+```
 
-1. **Create a dedicated user:**
+## Pre-Installation Requirements
+
+### 1. Fresh VPS Setup
 ```bash
-sudo adduser hostpanel
-sudo usermod -aG sudo hostpanel
+# Connect to your VPS via SSH
+ssh root@your-vps-ip
+# OR
+ssh username@your-vps-ip
+
+# Update system packages (works on all distributions)
+# For Ubuntu/Debian:
+apt update && apt upgrade -y
+
+# For CentOS/RHEL/Rocky/Alma:
+yum update -y
+# OR (newer versions)
+dnf update -y
+
+# For Fedora:
+dnf update -y
+
+# For OpenSUSE:
+zypper update -y
+```
+
+### 2. Install Essential Dependencies
+
+#### Universal Installation Script
+```bash
+#!/bin/bash
+# HostPanel Pro - Universal VPS Setup Script
+
+# Detect OS and distribution
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=$NAME
+    VERSION=$VERSION_ID
+else
+    echo "Cannot detect OS. Please install manually."
+    exit 1
+fi
+
+echo "Detected OS: $OS $VERSION"
+
+# Install dependencies based on distribution
+case $OS in
+    "Ubuntu"|"Debian GNU/Linux")
+        apt update
+        apt install -y curl wget git nginx nodejs npm mysql-server redis-server \
+                      certbot python3-certbot-nginx ufw fail2ban htop iotop \
+                      build-essential software-properties-common
+        
+        # Install Node.js 18.x
+        curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+        apt install -y nodejs
+        ;;
+        
+    "CentOS Linux"|"Red Hat Enterprise Linux"|"Rocky Linux"|"AlmaLinux")
+        # Enable EPEL repository
+        if command -v dnf &> /dev/null; then
+            dnf install -y epel-release
+            dnf update -y
+            dnf install -y curl wget git nginx nodejs npm mysql-server redis \
+                          certbot python3-certbot-nginx firewalld fail2ban \
+                          htop iotop gcc gcc-c++ make
+        else
+            yum install -y epel-release
+            yum update -y
+            yum install -y curl wget git nginx nodejs npm mysql-server redis \
+                          certbot python3-certbot-nginx firewalld fail2ban \
+                          htop iotop gcc gcc-c++ make
+        fi
+        
+        # Install Node.js 18.x
+        curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+        if command -v dnf &> /dev/null; then
+            dnf install -y nodejs
+        else
+            yum install -y nodejs
+        fi
+        ;;
+        
+    "Fedora Linux")
+        dnf update -y
+        dnf install -y curl wget git nginx nodejs npm mysql-server redis \
+                      certbot python3-certbot-nginx firewalld fail2ban \
+                      htop iotop gcc gcc-c++ make
+        ;;
+        
+    "openSUSE Leap")
+        zypper refresh
+        zypper install -y curl wget git nginx nodejs18 npm mysql redis \
+                         certbot python3-certbot-nginx firewalld fail2ban \
+                         htop iotop gcc gcc-c++ make
+        ;;
+        
+    *)
+        echo "Unsupported OS: $OS"
+        echo "Please install dependencies manually:"
+        echo "- Node.js 18.x"
+        echo "- npm"
+        echo "- nginx"
+        echo "- mysql-server"
+        echo "- redis"
+        echo "- certbot"
+        echo "- fail2ban"
+        exit 1
+        ;;
+esac
+
+echo "Dependencies installed successfully!"
+```
+
+## Installation Methods
+
+### Method 1: Automated Installation (Recommended)
+
+#### Quick Install Script
+```bash
+# Download and run the installation script
+curl -fsSL https://raw.githubusercontent.com/your-repo/hostpanel-pro/main/scripts/install.sh | bash
+
+# OR with wget
+wget -qO- https://raw.githubusercontent.com/your-repo/hostpanel-pro/main/scripts/install.sh | bash
+```
+
+#### Custom Installation Script
+```bash
+#!/bin/bash
+# HostPanel Pro - Automated Installation Script
+
+set -e
+
+# Configuration
+HOSTPANEL_USER="hostpanel"
+HOSTPANEL_DIR="/opt/hostpanel"
+SERVICE_PORT="3000"
+DOMAIN=""
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+print_status() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   print_error "This script must be run as root"
+   exit 1
+fi
+
+# Create hostpanel user
+print_status "Creating hostpanel user..."
+if ! id "$HOSTPANEL_USER" &>/dev/null; then
+    useradd -m -s /bin/bash $HOSTPANEL_USER
+    usermod -aG sudo $HOSTPANEL_USER
+fi
+
+# Create installation directory
+print_status "Setting up directories..."
+mkdir -p $HOSTPANEL_DIR
+chown $HOSTPANEL_USER:$HOSTPANEL_USER $HOSTPANEL_DIR
+
+# Clone repository
+print_status "Downloading HostPanel Pro..."
+cd $HOSTPANEL_DIR
+sudo -u $HOSTPANEL_USER git clone https://github.com/your-repo/hostpanel-pro.git .
+
+# Install Node.js dependencies
+print_status "Installing Node.js dependencies..."
+sudo -u $HOSTPANEL_USER npm install
+
+# Build application
+print_status "Building application..."
+sudo -u $HOSTPANEL_USER npm run build
+
+# Setup database
+print_status "Configuring database..."
+mysql -e "CREATE DATABASE IF NOT EXISTS hostpanel;"
+mysql -e "CREATE USER IF NOT EXISTS 'hostpanel'@'localhost' IDENTIFIED BY '$(openssl rand -base64 32)';"
+mysql -e "GRANT ALL PRIVILEGES ON hostpanel.* TO 'hostpanel'@'localhost';"
+mysql -e "FLUSH PRIVILEGES;"
+
+# Create systemd service
+print_status "Creating systemd service..."
+cat > /etc/systemd/system/hostpanel.service << EOF
+[Unit]
+Description=HostPanel Pro Control Panel
+After=network.target mysql.service redis.service
+Wants=mysql.service redis.service
+
+[Service]
+Type=simple
+User=$HOSTPANEL_USER
+Group=$HOSTPANEL_USER
+WorkingDirectory=$HOSTPANEL_DIR
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+Environment=PORT=$SERVICE_PORT
+
+# Security settings
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=$HOSTPANEL_DIR
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Configure nginx
+print_status "Configuring nginx..."
+cat > /etc/nginx/sites-available/hostpanel << EOF
+server {
+    listen 80;
+    server_name _;
+    
+    location / {
+        proxy_pass http://localhost:$SERVICE_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_read_timeout 86400;
+    }
+}
+EOF
+
+# Enable nginx site
+if [ -f /etc/nginx/sites-enabled/default ]; then
+    rm /etc/nginx/sites-enabled/default
+fi
+ln -sf /etc/nginx/sites-available/hostpanel /etc/nginx/sites-enabled/
+
+# Configure firewall
+print_status "Configuring firewall..."
+if command -v ufw &> /dev/null; then
+    ufw --force reset
+    ufw default deny incoming
+    ufw default allow outgoing
+    ufw allow ssh
+    ufw allow http
+    ufw allow https
+    ufw --force enable
+elif command -v firewall-cmd &> /dev/null; then
+    systemctl enable firewalld
+    systemctl start firewalld
+    firewall-cmd --permanent --add-service=ssh
+    firewall-cmd --permanent --add-service=http
+    firewall-cmd --permanent --add-service=https
+    firewall-cmd --reload
+fi
+
+# Start services
+print_status "Starting services..."
+systemctl daemon-reload
+systemctl enable mysql redis-server nginx hostpanel
+systemctl start mysql redis-server nginx hostpanel
+
+# Setup SSL if domain provided
+if [ ! -z "$DOMAIN" ]; then
+    print_status "Setting up SSL certificate for $DOMAIN..."
+    certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN
+fi
+
+# Final status check
+print_status "Checking service status..."
+systemctl is-active --quiet hostpanel && print_status "HostPanel Pro is running" || print_error "HostPanel Pro failed to start"
+systemctl is-active --quiet nginx && print_status "Nginx is running" || print_error "Nginx failed to start"
+systemctl is-active --quiet mysql && print_status "MySQL is running" || print_error "MySQL failed to start"
+
+print_status "Installation completed successfully!"
+print_status "Access your control panel at: http://your-server-ip"
+print_warning "Default login will be created on first access"
+```
+
+### Method 2: Manual Installation
+
+#### Step-by-Step Manual Setup
+
+```bash
+# 1. Create dedicated user
+useradd -m -s /bin/bash hostpanel
+usermod -aG sudo hostpanel
 su - hostpanel
-```
 
-2. **Configure firewall:**
-```bash
-sudo ufw enable
-sudo ufw allow ssh
-sudo ufw allow http
-sudo ufw allow https
-sudo ufw allow 8080/tcp  # HostPanel Pro default port
-```
+# 2. Clone repository
+cd /opt
+sudo mkdir hostpanel
+sudo chown hostpanel:hostpanel hostpanel
+cd hostpanel
+git clone https://github.com/your-repo/hostpanel-pro.git .
 
-### Step 2: Install Node.js and Dependencies
-
-```bash
-# Install Node.js 18.x
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# Verify installation
-node --version
-npm --version
-```
-
-### Step 3: Download and Install HostPanel Pro
-
-```bash
-# Clone the repository
-git clone https://github.com/your-repo/hostpanel-pro.git
-cd hostpanel-pro
-
-# Install dependencies
+# 3. Install dependencies
 npm install
 
-# Build the production version
+# 4. Build application
 npm run build
-```
 
-### Step 4: Configure Environment
+# 5. Configure environment
+cp .env.example .env
+nano .env
 
-```bash
-# Create configuration directory
-sudo mkdir -p /etc/hostpanel
-sudo chown hostpanel:hostpanel /etc/hostpanel
-
-# Copy configuration template
-cp config/hostpanel.conf.example /etc/hostpanel/hostpanel.conf
-
-# Edit configuration
-sudo nano /etc/hostpanel/hostpanel.conf
-```
-
-### Step 5: Database Setup
-
-```bash
-# Install MySQL/MariaDB
-sudo apt install -y mariadb-server
-
-# Secure MySQL installation
-sudo mysql_secure_installation
-
-# Create database and user
+# 6. Setup database
 sudo mysql -u root -p
-```
-
-```sql
 CREATE DATABASE hostpanel;
 CREATE USER 'hostpanel'@'localhost' IDENTIFIED BY 'secure_password';
 GRANT ALL PRIVILEGES ON hostpanel.* TO 'hostpanel'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
+
+# 7. Initialize database
+npm run db:migrate
+
+# 8. Start application
+npm start
 ```
 
-### Step 6: Web Server Configuration
+### Method 3: Docker Installation
 
-```bash
-# Create Nginx configuration
-sudo nano /etc/nginx/sites-available/hostpanel
+#### Docker Compose Setup
+```yaml
+version: '3.8'
+
+services:
+  hostpanel:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=mysql://hostpanel:password@mysql:3306/hostpanel
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - mysql
+      - redis
+    volumes:
+      - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=hostpanel
+      - MYSQL_USER=hostpanel
+      - MYSQL_PASSWORD=password
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - hostpanel
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
 ```
 
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-    
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-```
-
-```bash
-# Enable the site
-sudo ln -s /etc/nginx/sites-available/hostpanel /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-### Step 7: SSL Certificate
-
-```bash
-# Obtain SSL certificate
-sudo certbot --nginx -d your-domain.com
-```
-
-### Step 8: System Service
-
-```bash
-# Create systemd service
-sudo nano /etc/systemd/system/hostpanel.service
-```
-
-```ini
-[Unit]
-Description=HostPanel Pro Control Panel
-After=network.target
-
-[Service]
-Type=simple
-User=hostpanel
-WorkingDirectory=/home/hostpanel/hostpanel-pro
-ExecStart=/usr/bin/npm start
-Restart=on-failure
-RestartSec=10
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-# Enable and start service
-sudo systemctl daemon-reload
-sudo systemctl enable hostpanel
-sudo systemctl start hostpanel
-```
-
-## Docker Installation (Alternative)
-
-### Prerequisites
+#### Docker Installation Commands
 ```bash
 # Install Docker
 curl -fsSL https://get.docker.com -o get-docker.sh
@@ -194,240 +459,432 @@ sudo sh get-docker.sh
 sudo usermod -aG docker $USER
 
 # Install Docker Compose
-sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
 sudo chmod +x /usr/local/bin/docker-compose
-```
 
-### Docker Deployment
-```bash
-# Clone repository
+# Deploy HostPanel Pro
 git clone https://github.com/your-repo/hostpanel-pro.git
 cd hostpanel-pro
-
-# Start with Docker Compose
 docker-compose up -d
 ```
 
-## Configuration
+## VPS Provider Specific Instructions
 
-### Main Configuration File (`/etc/hostpanel/hostpanel.conf`)
+### DigitalOcean Droplets
+```bash
+# Create droplet with doctl
+doctl compute droplet create hostpanel \
+  --size s-2vcpu-4gb \
+  --image ubuntu-22-04-x64 \
+  --region nyc1 \
+  --ssh-keys YOUR_SSH_KEY_ID
 
-```ini
-[general]
-server_name = your-domain.com
-admin_email = admin@your-domain.com
-timezone = UTC
-
-[database]
-host = localhost
-port = 3306
-name = hostpanel
-user = hostpanel
-password = secure_password
-
-[security]
-session_timeout = 1800
-max_login_attempts = 5
-enable_2fa = true
-
-[backup]
-backup_path = /var/backups/hostpanel
-retention_days = 30
-auto_backup = true
-
-[ssl]
-auto_ssl = true
-ssl_provider = letsencrypt
-ssl_email = admin@your-domain.com
+# Or use DigitalOcean 1-Click App
+# Search for "HostPanel Pro" in marketplace (when available)
 ```
 
-## First-Time Setup
+### AWS EC2
+```bash
+# Launch instance with AWS CLI
+aws ec2 run-instances \
+  --image-id ami-0c02fb55956c7d316 \
+  --instance-type t3.medium \
+  --key-name YOUR_KEY_PAIR \
+  --security-group-ids sg-12345678 \
+  --subnet-id subnet-12345678 \
+  --user-data file://userdata.sh
+```
 
-1. **Access the web interface:**
-   - Open your browser and go to `https://your-domain.com`
-   - Complete the initial setup wizard
+### Google Cloud Platform
+```bash
+# Create VM instance
+gcloud compute instances create hostpanel-vm \
+  --zone=us-central1-a \
+  --machine-type=e2-medium \
+  --image-family=ubuntu-2204-lts \
+  --image-project=ubuntu-os-cloud \
+  --boot-disk-size=40GB \
+  --metadata-from-file startup-script=startup.sh
+```
 
-2. **Create admin account:**
-   - Username: admin
-   - Password: (strong password)
-   - Email: your-email@domain.com
+### Linode
+```bash
+# Create Linode with CLI
+linode-cli linodes create \
+  --type g6-standard-2 \
+  --region us-east \
+  --image linode/ubuntu22.04 \
+  --root_pass YOUR_ROOT_PASSWORD \
+  --label hostpanel-server
+```
 
-3. **Configure system settings:**
-   - Set timezone
-   - Configure email settings
-   - Set up backup schedule
+## Configuration Files
+
+### Environment Variables (.env)
+```env
+# Application Settings
+NODE_ENV=production
+PORT=3000
+APP_URL=https://your-domain.com
+APP_NAME="HostPanel Pro"
+
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=hostpanel
+DB_USER=hostpanel
+DB_PASSWORD=secure_random_password
+
+# Redis Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# Security Settings
+JWT_SECRET=your_jwt_secret_key_here
+SESSION_SECRET=your_session_secret_here
+ENCRYPTION_KEY=your_encryption_key_here
+
+# Email Configuration
+SMTP_HOST=smtp.your-domain.com
+SMTP_PORT=587
+SMTP_USER=noreply@your-domain.com
+SMTP_PASS=your_smtp_password
+SMTP_FROM="HostPanel Pro <noreply@your-domain.com>"
+
+# SSL Configuration
+SSL_AUTO=true
+SSL_EMAIL=admin@your-domain.com
+
+# Backup Configuration
+BACKUP_PATH=/var/backups/hostpanel
+BACKUP_RETENTION_DAYS=30
+BACKUP_ENCRYPTION=true
+
+# Monitoring
+MONITORING_ENABLED=true
+MONITORING_INTERVAL=60
+
+# API Configuration
+API_RATE_LIMIT=100
+API_RATE_WINDOW=900
+
+# File Upload Limits
+MAX_FILE_SIZE=100MB
+UPLOAD_PATH=/var/www/uploads
+```
 
 ## Security Hardening
 
-### Firewall Configuration
+### SSL/TLS Configuration
 ```bash
-# Configure UFW
-sudo ufw --force reset
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw allow ssh
-sudo ufw allow http
-sudo ufw allow https
-sudo ufw allow 8080/tcp
-sudo ufw enable
+# Generate strong DH parameters
+openssl dhparam -out /etc/ssl/certs/dhparam.pem 2048
+
+# Configure strong SSL in nginx
+cat >> /etc/nginx/sites-available/hostpanel << 'EOF'
+# SSL Configuration
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+ssl_prefer_server_ciphers off;
+ssl_dhparam /etc/ssl/certs/dhparam.pem;
+ssl_session_timeout 10m;
+ssl_session_cache shared:SSL:10m;
+ssl_session_tickets off;
+ssl_stapling on;
+ssl_stapling_verify on;
+
+# Security Headers
+add_header Strict-Transport-Security "max-age=63072000" always;
+add_header X-Content-Type-Options nosniff;
+add_header X-Frame-Options DENY;
+add_header X-XSS-Protection "1; mode=block";
+add_header Referrer-Policy "strict-origin-when-cross-origin";
+EOF
 ```
 
-### Fail2Ban Configuration
+### Firewall Rules
 ```bash
-# Configure Fail2Ban for HostPanel
-sudo nano /etc/fail2ban/jail.local
+# UFW (Ubuntu/Debian)
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh
+ufw allow http
+ufw allow https
+ufw allow 21/tcp   # FTP
+ufw allow 22/tcp   # SSH
+ufw allow 25/tcp   # SMTP
+ufw allow 53       # DNS
+ufw allow 80/tcp   # HTTP
+ufw allow 110/tcp  # POP3
+ufw allow 143/tcp  # IMAP
+ufw allow 443/tcp  # HTTPS
+ufw allow 465/tcp  # SMTPS
+ufw allow 587/tcp  # SMTP Submission
+ufw allow 993/tcp  # IMAPS
+ufw allow 995/tcp  # POP3S
+ufw --force enable
+
+# Firewalld (CentOS/RHEL/Fedora)
+firewall-cmd --permanent --add-service=ssh
+firewall-cmd --permanent --add-service=http
+firewall-cmd --permanent --add-service=https
+firewall-cmd --permanent --add-service=smtp
+firewall-cmd --permanent --add-service=pop3
+firewall-cmd --permanent --add-service=imap
+firewall-cmd --permanent --add-service=ftp
+firewall-cmd --permanent --add-port=587/tcp
+firewall-cmd --permanent --add-port=465/tcp
+firewall-cmd --permanent --add-port=993/tcp
+firewall-cmd --permanent --add-port=995/tcp
+firewall-cmd --reload
 ```
 
-```ini
-[hostpanel]
-enabled = true
-port = 8080
-logpath = /var/log/hostpanel/access.log
-maxretry = 3
-bantime = 3600
-```
+## Performance Optimization
 
-### SSH Hardening
+### System Optimization
 ```bash
-# Edit SSH configuration
-sudo nano /etc/ssh/sshd_config
+# Optimize system limits
+cat >> /etc/security/limits.conf << 'EOF'
+* soft nofile 65536
+* hard nofile 65536
+* soft nproc 32768
+* hard nproc 32768
+EOF
+
+# Optimize kernel parameters
+cat >> /etc/sysctl.conf << 'EOF'
+# Network optimization
+net.core.rmem_max = 134217728
+net.core.wmem_max = 134217728
+net.ipv4.tcp_rmem = 4096 65536 134217728
+net.ipv4.tcp_wmem = 4096 65536 134217728
+net.core.netdev_max_backlog = 5000
+net.ipv4.tcp_congestion_control = bbr
+
+# File system optimization
+fs.file-max = 2097152
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
+EOF
+
+sysctl -p
 ```
 
-```
-Port 2222
-PermitRootLogin no
-PasswordAuthentication no
-PubkeyAuthentication yes
-MaxAuthTries 3
-ClientAliveInterval 300
-ClientAliveCountMax 2
-```
-
-## Maintenance
-
-### Regular Updates
+### Database Optimization
 ```bash
-# Update system packages
-sudo apt update && sudo apt upgrade -y
+# MySQL/MariaDB optimization
+cat >> /etc/mysql/mysql.conf.d/hostpanel.cnf << 'EOF'
+[mysqld]
+# Basic settings
+max_connections = 200
+max_allowed_packet = 64M
+thread_cache_size = 16
+table_open_cache = 4000
+query_cache_type = 1
+query_cache_size = 64M
 
-# Update HostPanel Pro
-cd /home/hostpanel/hostpanel-pro
-git pull origin main
-npm install
-npm run build
+# InnoDB settings
+innodb_buffer_pool_size = 1G
+innodb_log_file_size = 256M
+innodb_flush_log_at_trx_commit = 2
+innodb_flush_method = O_DIRECT
+EOF
+
+systemctl restart mysql
+```
+
+## Monitoring and Maintenance
+
+### System Monitoring Script
+```bash
+#!/bin/bash
+# HostPanel Pro - System Monitoring Script
+
+LOGFILE="/var/log/hostpanel-monitor.log"
+THRESHOLD_CPU=80
+THRESHOLD_MEMORY=80
+THRESHOLD_DISK=85
+
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> $LOGFILE
+}
+
+# CPU Usage
+CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 | cut -d',' -f1)
+if (( $(echo "$CPU_USAGE > $THRESHOLD_CPU" | bc -l) )); then
+    log_message "HIGH CPU USAGE: ${CPU_USAGE}%"
+fi
+
+# Memory Usage
+MEMORY_USAGE=$(free | grep Mem | awk '{printf("%.1f"), $3/$2 * 100.0}')
+if (( $(echo "$MEMORY_USAGE > $THRESHOLD_MEMORY" | bc -l) )); then
+    log_message "HIGH MEMORY USAGE: ${MEMORY_USAGE}%"
+fi
+
+# Disk Usage
+DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | cut -d'%' -f1)
+if [ $DISK_USAGE -gt $THRESHOLD_DISK ]; then
+    log_message "HIGH DISK USAGE: ${DISK_USAGE}%"
+fi
+
+# Service Status
+if ! systemctl is-active --quiet hostpanel; then
+    log_message "HOSTPANEL SERVICE DOWN"
+    systemctl restart hostpanel
+fi
+
+if ! systemctl is-active --quiet nginx; then
+    log_message "NGINX SERVICE DOWN"
+    systemctl restart nginx
+fi
+
+if ! systemctl is-active --quiet mysql; then
+    log_message "MYSQL SERVICE DOWN"
+    systemctl restart mysql
+fi
+```
+
+### Automated Backup Script
+```bash
+#!/bin/bash
+# HostPanel Pro - Backup Script
+
+BACKUP_DIR="/var/backups/hostpanel"
+DATE=$(date +%Y%m%d_%H%M%S)
+RETENTION_DAYS=30
+
+mkdir -p $BACKUP_DIR
+
+# Database backup
+mysqldump -u hostpanel -p hostpanel > $BACKUP_DIR/database_$DATE.sql
+gzip $BACKUP_DIR/database_$DATE.sql
+
+# Application backup
+tar -czf $BACKUP_DIR/application_$DATE.tar.gz -C /opt hostpanel
+
+# Configuration backup
+tar -czf $BACKUP_DIR/config_$DATE.tar.gz /etc/nginx /etc/mysql /etc/hostpanel
+
+# Clean old backups
+find $BACKUP_DIR -name "*.gz" -mtime +$RETENTION_DAYS -delete
+find $BACKUP_DIR -name "*.sql.gz" -mtime +$RETENTION_DAYS -delete
+
+echo "Backup completed: $DATE"
+```
+
+## Troubleshooting Guide
+
+### Common Issues and Solutions
+
+#### 1. Service Won't Start
+```bash
+# Check service status
+systemctl status hostpanel
+journalctl -u hostpanel -f
+
+# Common fixes
+sudo systemctl daemon-reload
 sudo systemctl restart hostpanel
 ```
 
-### Backup
+#### 2. Database Connection Issues
 ```bash
-# Manual backup
-sudo /usr/local/bin/hostpanel-backup
-
-# Automated backup (cron)
-sudo crontab -e
-# Add: 0 2 * * * /usr/local/bin/hostpanel-backup
-```
-
-### Log Management
-```bash
-# View logs
-sudo journalctl -u hostpanel -f
-
-# Log rotation
-sudo nano /etc/logrotate.d/hostpanel
-```
-
-```
-/var/log/hostpanel/*.log {
-    daily
-    missingok
-    rotate 52
-    compress
-    delaycompress
-    notifempty
-    copytruncate
-}
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Service won't start:**
-```bash
-sudo systemctl status hostpanel
-sudo journalctl -u hostpanel
-```
-
-2. **Database connection error:**
-```bash
-# Check MySQL service
-sudo systemctl status mysql
-
-# Test connection
+# Test database connection
 mysql -u hostpanel -p hostpanel
+
+# Reset database password
+sudo mysql -u root -p
+ALTER USER 'hostpanel'@'localhost' IDENTIFIED BY 'new_password';
+FLUSH PRIVILEGES;
 ```
 
-3. **SSL certificate issues:**
+#### 3. SSL Certificate Issues
 ```bash
-# Renew certificate
-sudo certbot renew --nginx
+# Renew certificates
+certbot renew --dry-run
+certbot renew
+
+# Force renewal
+certbot certonly --force-renewal -d your-domain.com
 ```
 
-4. **Permission issues:**
+#### 4. High Resource Usage
+```bash
+# Check processes
+htop
+iotop
+
+# Check disk usage
+df -h
+du -sh /var/log/*
+
+# Clean logs
+journalctl --vacuum-time=30d
+logrotate -f /etc/logrotate.conf
+```
+
+#### 5. Permission Issues
 ```bash
 # Fix file permissions
-sudo chown -R hostpanel:hostpanel /home/hostpanel/hostpanel-pro
-sudo chmod -R 755 /home/hostpanel/hostpanel-pro
+chown -R hostpanel:hostpanel /opt/hostpanel
+chmod -R 755 /opt/hostpanel
 ```
 
-### Performance Optimization
+### Log Locations
+```
+Application Logs: /var/log/hostpanel/
+System Logs: /var/log/syslog
+Nginx Logs: /var/log/nginx/
+MySQL Logs: /var/log/mysql/
+```
 
-1. **Enable caching:**
+## Updates and Maintenance
+
+### Update Process
 ```bash
-# Install Redis
-sudo apt install redis-server
-sudo systemctl enable redis-server
+# 1. Backup current installation
+./scripts/backup.sh
+
+# 2. Pull latest changes
+cd /opt/hostpanel
+git pull origin main
+
+# 3. Update dependencies
+npm install
+
+# 4. Run database migrations
+npm run db:migrate
+
+# 5. Rebuild application
+npm run build
+
+# 6. Restart service
+systemctl restart hostpanel
 ```
 
-2. **Database optimization:**
-```bash
-# MySQL tuning
-sudo mysql_secure_installation
-sudo nano /etc/mysql/mysql.conf.d/mysqld.cnf
-```
-
-3. **Nginx optimization:**
-```bash
-# Enable gzip compression
-sudo nano /etc/nginx/nginx.conf
-```
-
-## Uninstallation
-
-```bash
-# Stop services
-sudo systemctl stop hostpanel
-sudo systemctl disable hostpanel
-
-# Remove files
-sudo rm -rf /home/hostpanel/hostpanel-pro
-sudo rm -f /etc/systemd/system/hostpanel.service
-sudo rm -f /etc/nginx/sites-enabled/hostpanel
-sudo rm -f /etc/nginx/sites-available/hostpanel
-
-# Remove database
-mysql -u root -p -e "DROP DATABASE hostpanel; DROP USER 'hostpanel'@'localhost';"
-
-# Remove SSL certificate
-sudo certbot delete --cert-name your-domain.com
-```
+### Maintenance Schedule
+- **Daily**: Automated backups, log rotation
+- **Weekly**: Security updates, certificate renewal checks
+- **Monthly**: Full system update, performance review
+- **Quarterly**: Security audit, disaster recovery test
 
 ## Support and Documentation
 
-- **Official Documentation**: https://docs.hostpanel.pro
+### Getting Help
+- **Documentation**: https://docs.hostpanel.pro
 - **Community Forum**: https://community.hostpanel.pro
 - **GitHub Issues**: https://github.com/your-repo/hostpanel-pro/issues
-- **Security Reports**: security@hostpanel.pro
+- **Discord Support**: https://discord.gg/hostpanel
+- **Email Support**: support@hostpanel.pro
 
-For additional support, please refer to the troubleshooting section or contact our support team.
+### Professional Services
+- **Installation Service**: Professional VPS setup
+- **Custom Configuration**: Tailored for your needs
+- **24/7 Support**: Enterprise support available
+- **Training**: Administrator training programs
+
+---
+
+**HostPanel Pro** - Universal VPS hosting control panel for the modern web.

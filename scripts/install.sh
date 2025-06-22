@@ -91,7 +91,7 @@ install_dependencies() {
         *rhel*|*centos*|*fedora*)
             # Enable EPEL repository for CentOS/RHEL
             if [[ "$ID" == "centos" || "$ID" == "rhel" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
-                # Remove potentially conflicting existing nodejs packages
+                # Remove potentially conflicting existing nodejs and npm packages
                 print_status "Removing conflicting nodejs packages..."
                 sudo yum remove --purge nodejs npm -y || sudo dnf remove --purge nodejs npm -y
 
@@ -109,18 +109,24 @@ install_dependencies() {
                     dnf update -y
                     dnf install -y curl wget git nginx nodejs npm mysql-server redis \
                                   certbot python3-certbot-nginx firewalld fail2ban \
-                                  htop iotop gcc gcc-c++ make unzip
+                                  htop iotop gcc gcc-c++ make unzip -y
                 else
                     yum install -y epel-release
                     yum update -y
                     yum install -y curl wget git nginx nodejs npm mysql-server redis \
                                   certbot python3-certbot-nginx firewalld fail2ban \
-                                  htop iotop gcc gcc-c++ make unzip
+                                  htop iotop gcc gcc-c++ make unzip -y
                 fi
                 
                 # Install Node.js using the determined version script
                 print_status "Adding NodeSource repository for Node.js..."
-                curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+                if [[ "$NODE_VERSION_SCRIPT" == "setup_12.x" ]]; then
+                    curl -fsSL https://rpm.nodesource.com/setup_12.x | bash -
+                    print_status "Node.js 12 repository added."
+                else
+                    curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+                    print_status "Node.js 18 repository added."
+                fi
                 if command -v dnf &> /dev/null; then
                     dnf install -y nodejs
                 else
@@ -129,11 +135,11 @@ install_dependencies() {
                 
             elif [[ "$ID" == "fedora" ]]; then
                 # Remove potentially conflicting existing nodejs packages
-                print_status "Removing conflicting nodejs packages..."
+                print_status "Removing conflicting nodejs and npm packages..."
                 sudo dnf remove --purge nodejs npm -y
 
                 dnf update -y
-                dnf install -y curl wget git nginx nodejs npm mysql-server redis \
+                dnf install -y curl wget git nginx nodejs npm mysql-server redis-server \
                               certbot python3-certbot-nginx firewalld fail2ban \
                               htop iotop gcc gcc-c++ make unzip
             fi

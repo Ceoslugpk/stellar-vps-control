@@ -68,7 +68,7 @@ install_dependencies() {
     print_status "Updating package lists and installing system dependencies..."
 
     case "$ID_LIKE" in
-        debian|ubuntu)
+        *debian*|*ubuntu*)
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -y
             apt-get install -y curl wget git nginx mariadb-server redis-server certbot python3-certbot-nginx firewalld fail2ban htop iotop build-essential unzip
@@ -77,7 +77,7 @@ install_dependencies() {
             curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
             apt-get install -y nodejs
             ;;
-        rhel|fedora|centos)
+        *rhel*|*fedora*|*centos*)
             # For CentOS, Rocky, AlmaLinux, Fedora
             yum update -y
             yum install -y epel-release || true # Fails gracefully if not needed
@@ -88,7 +88,7 @@ install_dependencies() {
             curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo -E bash -
             yum install -y nodejs
             ;;
-        suse)
+        *suse*)
             zypper refresh
             zypper install -y curl wget git nginx mariadb redis certbot python3-certbot-nginx firewalld fail2ban htop iotop gcc make unzip patterns-devel-base_basis
             
@@ -319,8 +319,10 @@ EOF
         # RHEL/SUSE style
         echo "$NGINX_CONF_CONTENT" > /etc/nginx/conf.d/hostpanel.conf
         # It's good practice to also remove the default if it exists
-        mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
-        sed '/include \/etc\/nginx\/conf.d\/\*.conf;/,/server {/s/server {.*}/server {/;/^    include \/etc\/nginx\/default.d\/\*.conf;$/d' /etc/nginx/nginx.conf.backup > /etc/nginx/nginx.conf || true
+        if [ -f /etc/nginx/nginx.conf ]; then
+            mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
+            sed '/include \/etc\/nginx\/conf.d\/\*.conf;/,/server {/s/server {.*}/server {/;/^    include \/etc\/nginx\/default.d\/\*.conf;$/d' /etc/nginx/nginx.conf.backup > /etc/nginx/nginx.conf || true
+        fi
     fi
     
     print_status "Testing Nginx configuration..."
@@ -373,7 +375,7 @@ setup_wordpress_installer() {
     elif [ -n "$(command -v nginx)" ]; then
         # On RHEL/Fedora, this is 'nginx'. On Debian/Ubuntu it's 'www-data'
         case "$ID_LIKE" in
-            rhel|fedora|centos|suse) WEB_USER="nginx" ;;
+            *rhel*|*fedora*|*centos*|*suse*) WEB_USER="nginx" ;;
         esac
     fi
     print_status "Detected web server user as: $WEB_USER"
@@ -444,7 +446,14 @@ final_summary() {
         if systemctl is-active --quiet "$service"; then
             echo -e " ✓ $service: ${GREEN}Active${NC}"
         else
-            echo -e " ✗ $service: ${RED}Inactive${NC}"
+            # Check for alternative service names
+            if [[ "$service" == "mariadb" ]] && ! systemctl is-active --quiet "mysql" && ! systemctl is-active --quiet "mysqld"; then
+                 echo -e " ✗ $service: ${RED}Inactive${NC}"
+            elif [[ "$service" != "mariadb" ]]; then
+                 echo -e " ✗ $service: ${RED}Inactive${NC}"
+            else
+                 echo -e " ✓ mariadb/mysql: ${GREEN}Active${NC}"
+            fi
         fi
     done
     
@@ -507,4 +516,3 @@ main() {
 }
 
 main "$@"
-

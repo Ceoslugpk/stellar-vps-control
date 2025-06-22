@@ -74,49 +74,36 @@ install_dependencies() {
 
     print_status "Installing system dependencies..."
 
- # Remove potentially conflicting existing nodejs and npm packages
-        sudo yum remove nodejs npm -y
-    fi
     # Enable EPEL repository for CentOS
     print_status "Enabling EPEL repository..."
-    if command -v dnf &> /dev/null; then
-        dnf install -y epel-release
-        dnf update -y
-    else
-        yum install -y epel-release
-        yum update -y
-    fi
+    sudo yum install -y epel-release
+    sudo yum update -y
 
     # Install core dependencies
     print_status "Installing core dependencies..."
-    if command -v dnf &> /dev/null; then
-        dnf install -y curl wget git nginx mysql-server redis \
-                      certbot python3-certbot-nginx firewalld fail2ban \
+    sudo yum install -y curl wget git nginx mysql-server redis \\
+                      certbot python3-certbot-nginx firewalld fail2ban \\
                       htop iotop gcc gcc-c++ make unzip
-    else
-        yum install -y curl wget git nginx mysql-server redis \
-                      certbot python3-certbot-nginx firewalld fail2ban \
-                      htop iotop gcc gcc-c++ make unzip
-    fi
+
+    # Remove potentially conflicting existing nodejs and npm packages
+    print_status \"Removing conflicting Node.js packages...\"\
+    sudo yum remove -y nodejs npm
 
     # Install Node.js based on CentOS version
     print_status "Adding NodeSource repository for Node.js..."
     if [[ "$VERSION_ID" == "7" ]]; then
- # This section for zypper seems out of place for a CentOS-only script
-            zypper refresh
-            zypper install -y curl wget git nginx nodejs18 npm mysql redis \
-                             certbot python3-certbot-nginx firewalld fail2ban \
-                             htop iotop gcc gcc-c++ make unzip
-
         print_warning "Detected CentOS 7. Installing Node.js 12 (LTS) as Node.js 18 requires newer system libraries."
         curl -fsSL https://rpm.nodesource.com/setup_12.x | bash -
+        sudo yum install -y nodejs
     else
+        print_status \"Installing Node.js 18.x...\"\
         curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+        sudo yum install -y nodejs
     fi
- # Install Node.js after adding the repository
-        yum install -y nodejs
-    fi
-    
+
+    # Ensure npm is installed
+    sudo yum install -y npm
+
     print_status "Dependencies installed successfully!"
 }
 

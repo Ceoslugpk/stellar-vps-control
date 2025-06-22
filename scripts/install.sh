@@ -73,7 +73,7 @@ install_dependencies() {
             apt-get update -y
             apt-get install -y curl wget git nginx mariadb-server redis-server certbot python3-certbot-nginx firewalld fail2ban htop iotop build-essential unzip
             
-            print_status "Installing Node.js..."
+            print_status "Installing Node.js v18..."
             curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
             apt-get install -y nodejs
             ;;
@@ -81,18 +81,29 @@ install_dependencies() {
             # For CentOS, Rocky, AlmaLinux, Fedora
             yum update -y
             yum install -y epel-release || true # Fails gracefully if not needed
-            yum install -y curl wget git nginx mariadb-server redis certbot python3-certbot-nginx firewalld fail2ban htop iotop gcc gcc-c++ make unzip
             
-            print_status "Installing Node.js..."
-            yum remove -y nodejs npm # Remove old versions
-            curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo -E bash -
+            # CentOS 7 has different package names and requirements
+            if [[ "$VERSION_ID" == "7" ]]; then
+                print_warning "Detected CentOS 7. Using compatible packages (python2-certbot, nodejs-16)."
+                yum install -y curl wget git nginx mariadb-server redis certbot python2-certbot-nginx firewalld fail2ban htop iotop gcc gcc-c++ make unzip
+                
+                print_status "Installing Node.js v16 (LTS for CentOS 7 compatibility)..."
+                curl -fsSL https://rpm.nodesource.com/setup_16.x | sudo -E bash -
+            else
+                yum install -y curl wget git nginx mariadb-server redis certbot python3-certbot-nginx firewalld fail2ban htop iotop gcc gcc-c++ make unzip
+                
+                print_status "Installing Node.js v18..."
+                curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo -E bash -
+            fi
+            
+            yum remove -y nodejs npm # Remove conflicting old versions
             yum install -y nodejs
             ;;
         *suse*)
             zypper refresh
             zypper install -y curl wget git nginx mariadb redis certbot python3-certbot-nginx firewalld fail2ban htop iotop gcc make unzip patterns-devel-base_basis
             
-            print_status "Installing Node.js..."
+            print_status "Installing Node.js v18..."
             zypper remove -y nodejs npm
             curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo -E bash -
             zypper install -y nodejs
@@ -318,11 +329,8 @@ EOF
     else
         # RHEL/SUSE style
         echo "$NGINX_CONF_CONTENT" > /etc/nginx/conf.d/hostpanel.conf
-        # It's good practice to also remove the default if it exists
-        if [ -f /etc/nginx/nginx.conf ]; then
-            mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
-            sed '/include \/etc\/nginx\/conf.d\/\*.conf;/,/server {/s/server {.*}/server {/;/^    include \/etc\/nginx\/default.d\/\*.conf;$/d' /etc/nginx/nginx.conf.backup > /etc/nginx/nginx.conf || true
-        fi
+        # Safely remove default config if it exists
+        rm -f /etc/nginx/conf.d/default.conf
     fi
     
     print_status "Testing Nginx configuration..."
@@ -369,15 +377,10 @@ setup_wordpress_installer() {
     print_status "Setting up WordPress one-click installer..."
     
     # Determine web server user
-    local WEB_USER="www-data" # Default for Debian
-    if [ -n "$(command -v apache2)" ]; then
-        WEB_USER=$(ps axo user,group,comm | egrep '(apache|httpd)' | grep -v ^root | uniq | cut -d ' ' -f 1)
-    elif [ -n "$(command -v nginx)" ]; then
-        # On RHEL/Fedora, this is 'nginx'. On Debian/Ubuntu it's 'www-data'
-        case "$ID_LIKE" in
-            *rhel*|*fedora*|*centos*|*suse*) WEB_USER="nginx" ;;
-        esac
-    fi
+    local WEB_USER="www-data" # Default for Debian/Ubuntu
+    case "$ID_LIKE" in
+        *rhel*|*fedora*|*centos*|*suse*) WEB_USER="nginx" ;;
+    esac
     print_status "Detected web server user as: $WEB_USER"
 
     local WP_INSTALLER_DIR="$HOSTPANEL_DIR/installers/wordpress"
@@ -443,17 +446,12 @@ final_summary() {
     
     # Check service statuses
     for service in hostpanel nginx mariadb redis fail2ban; do
-        if systemctl is-active --quiet "$service"; then
+        if systemctl is-active --quiet "$service" || \
+           ( [[ "$service" == "mariadb" ]] && (systemctl is-active --quiet "mysql" || systemctl is-active --quiet "mysqld") ) || \
+           ( [[ "$service" == "redis" ]] && systemctl is-active --quiet "redis-server" ); then
             echo -e " ✓ $service: ${GREEN}Active${NC}"
         else
-            # Check for alternative service names
-            if [[ "$service" == "mariadb" ]] && ! systemctl is-active --quiet "mysql" && ! systemctl is-active --quiet "mysqld"; then
-                 echo -e " ✗ $service: ${RED}Inactive${NC}"
-            elif [[ "$service" != "mariadb" ]]; then
-                 echo -e " ✗ $service: ${RED}Inactive${NC}"
-            else
-                 echo -e " ✓ mariadb/mysql: ${GREEN}Active${NC}"
-            fi
+            echo -e " ✗ $service: ${RED}Inactive${NC}"
         fi
     done
     
@@ -479,7 +477,11 @@ final_summary() {
     if [ -n "$DOMAIN" ]; then
         echo -e "  1. Point your domain's DNS A record to: ${IP_ADDRESS}"
         echo -e "  2. Secure your site with an SSL certificate:"
-        echo -e "     ${GREEN}sudo certbot --nginx -d ${DOMAIN}${NC}"
+        if [[ "$VERSION_ID" == "7" ]]; then
+            echo -e "     ${GREEN}sudo certbot --nginx -d ${DOMAIN}${NC}"
+        else
+            echo -e "     ${GREEN}sudo certbot --nginx -d ${DOMAIN}${NC}"
+        fi
     else
         echo -e "  1. To use a domain name, re-run this script or manually edit:"
         echo -e "     - ${HOSTPANEL_DIR}/.env (update APP_URL)"

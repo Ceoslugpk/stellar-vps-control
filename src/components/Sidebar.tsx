@@ -21,7 +21,8 @@ import {
   Upload,
   Lock,
   FileText,
-  Clock
+  Clock,
+  Zap
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -32,6 +33,7 @@ interface SidebarProps {
 export const Sidebar = ({ activeSection, onSectionChange }: SidebarProps) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Monitor },
+    { id: 'vps-connection', label: 'VPS Connection', icon: Zap },
     { id: 'files', label: 'File Manager', icon: Folder },
     { id: 'ftp', label: 'FTP Management', icon: Upload },
     { id: 'databases', label: 'Databases', icon: Database },

@@ -16,6 +16,7 @@ import { ApplicationsManagement } from './dashboard/ApplicationsManagement';
 import { MetricsAnalytics } from './dashboard/MetricsAnalytics';
 import { AdvancedTools } from './dashboard/AdvancedTools';
 import { PreferencesManager } from './dashboard/PreferencesManager';
+import { VPSConnectionManager } from './dashboard/VPSConnection';
 
 interface DashboardProps {
   activeSection: string;
@@ -26,6 +27,8 @@ export const Dashboard = ({ activeSection }: DashboardProps) => {
     switch (activeSection) {
       case 'dashboard':
         return <SystemOverview />;
+      case 'vps-connection':
+        return <VPSConnectionManager />;
       case 'files':
         return <FileManager />;
       case 'ftp':

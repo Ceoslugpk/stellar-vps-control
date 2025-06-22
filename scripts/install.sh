@@ -46,8 +46,8 @@ detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         OS=$NAME
-        VERSION=$VERSION_ID
-        ID_LIKE=${ID_LIKE:-$ID}
+        VERSION_ID=$VERSION_ID
+        ID=$ID
     else
         print_error "Cannot detect OS. Please install manually."
         exit 1
@@ -66,86 +66,47 @@ check_root() {
 
 # Install dependencies based on distribution
 install_dependencies() {
+    # Check if the OS is CentOS
+    if [ "$ID" != "centos" ]; then
+        print_error "This script is only compatible with CentOS. Detected OS: $OS"
+        exit 1
+    fi
+
     print_status "Installing system dependencies..."
-    
-    case $ID_LIKE in
-        *debian*|*ubuntu*)
-            apt update
-            # Remove potentially conflicting existing nodejs packages
-            print_status "Removing conflicting nodejs packages..."
-            sudo apt remove --purge libnode-dev nodejs npm -y
 
-            # Add NodeSource repository for Node.js 18.x
-            # https://github.com/nodesource/distributions/blob/master/README.md
-            print_status "Adding NodeSource repository for Node.js 18.x..."
-            apt install -y curl wget git nginx nodejs npm mysql-server redis-server \
-                          certbot python3-certbot-nginx ufw fail2ban htop iotop \
-                          build-essential software-properties-common unzip
-            
-            # Install Node.js 18.x
-            print_status "Installing Node.js 18.x..."
-            curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-            apt install -y nodejs
-            ;;
-            
-        *rhel*|*centos*|*fedora*)
-            # Enable EPEL repository for CentOS/RHEL
-            if [[ "$ID" == "centos" || "$ID" == "rhel" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
-                # Remove potentially conflicting existing nodejs and npm packages
-                print_status "Removing conflicting nodejs packages..."
-                sudo yum remove --purge nodejs npm -y || sudo dnf remove --purge nodejs npm -y
+    # Remove potentially conflicting existing nodejs and npm packages
+    print_status "Removing conflicting nodejs packages..."
+    if command -v dnf &> /dev/null; then
+        sudo dnf remove nodejs npm -y
+    else
+        sudo yum remove nodejs npm -y
+    fi
 
-                # Check if it's CentOS 7
-                if [[ "$ID" == "centos" && "$VERSION_ID" == "7" ]]; then
-                    print_warning "Detected CentOS 7. Installing Node.js 12 (LTS) as Node.js 18 requires newer system libraries."
-                    NODE_VERSION_SCRIPT="setup_12.x"
-                else
-                    print_status "Installing Node.js 18.x..."
-                    NODE_VERSION_SCRIPT="setup_18.x"
-                fi
+    # Enable EPEL repository for CentOS
+    print_status "Enabling EPEL repository..."
+    if command -v dnf &> /dev/null; then
+        dnf install -y epel-release
+        dnf update -y
+    else
+        yum install -y epel-release
+        yum update -y
+    fi
 
-                if command -v dnf &> /dev/null; then
-                    dnf install -y epel-release
-                    dnf update -y
-                    dnf install -y curl wget git nginx nodejs npm mysql-server redis \
-                                  certbot python3-certbot-nginx firewalld fail2ban \
-                                  htop iotop gcc gcc-c++ make unzip -y
-                else
-                    yum install -y epel-release
-                    yum update -y
-                    yum install -y curl wget git nginx nodejs npm mysql-server redis \
-                                  certbot python3-certbot-nginx firewalld fail2ban \
-                                  htop iotop gcc gcc-c++ make unzip -y
-                fi
-                
-                # Install Node.js using the determined version script
-                print_status "Adding NodeSource repository for Node.js..."
-                if [[ "$NODE_VERSION_SCRIPT" == "setup_12.x" ]]; then
-                    curl -fsSL https://rpm.nodesource.com/setup_12.x | bash -
-                    print_status "Node.js 12 repository added."
-                else
-                    curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
-                    print_status "Node.js 18 repository added."
-                fi
-                if command -v dnf &> /dev/null; then
-                    dnf install -y nodejs
-                else
-                    yum install -y nodejs
-                fi
-                
-            elif [[ "$ID" == "fedora" ]]; then
-                # Remove potentially conflicting existing nodejs packages
-                print_status "Removing conflicting nodejs and npm packages..."
-                sudo dnf remove --purge nodejs npm -y
+    # Install core dependencies
+    print_status "Installing core dependencies..."
+    if command -v dnf &> /dev/null; then
+        dnf install -y curl wget git nginx mysql-server redis \
+                      certbot python3-certbot-nginx firewalld fail2ban \
+                      htop iotop gcc gcc-c++ make unzip
+    else
+        yum install -y curl wget git nginx mysql-server redis \
+                      certbot python3-certbot-nginx firewalld fail2ban \
+                      htop iotop gcc gcc-c++ make unzip
+    fi
 
-                dnf update -y
-                dnf install -y curl wget git nginx nodejs npm mysql-server redis-server \
-                              certbot python3-certbot-nginx firewalld fail2ban \
-                              htop iotop gcc gcc-c++ make unzip
-            fi
-            ;;
-            
-        *suse*)
+    # Install Node.js based on CentOS version
+    print_status "Adding NodeSource repository for Node.js..."
+    if [[ "$VERSION_ID" == "7" ]]; then
             # Remove potentially conflicting existing nodejs packages
             print_status "Removing conflicting nodejs packages..."
             sudo zypper remove --clean-deps nodejs npm -y
@@ -154,16 +115,19 @@ install_dependencies() {
             zypper install -y curl wget git nginx nodejs18 npm mysql redis \
                              certbot python3-certbot-nginx firewalld fail2ban \
                              htop iotop gcc gcc-c++ make unzip
-            ;;
-            
-        *)
-            print_error "Unsupported OS: $OS"
-            print_error "Please install dependencies manually:"
-            print_error "- Node.js 18.x, npm, nginx, mysql-server, redis"
-            print_error "- certbot, fail2ban, build tools"
+
+        print_warning "Detected CentOS 7. Installing Node.js 12 (LTS) as Node.js 18 requires newer system libraries."
+        curl -fsSL https://rpm.nodesource.com/setup_12.x | bash -
+    else
+        print_status "Installing Node.js 18.x..."
+        curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+    fi
+    if command -v dnf &> /dev/null; then
+        dnf install -y nodejs
             exit 1
-            ;;
-    esac
+    else
+        yum install -y nodejs
+    fi
     
     print_status "Dependencies installed successfully!"
 }
@@ -427,42 +391,21 @@ EOF
 configure_firewall() {
     print_status "Configuring firewall..."
     
-    if command -v ufw &> /dev/null; then
-        # Ubuntu/Debian firewall
-        ufw --force reset
-        ufw default deny incoming
-        ufw default allow outgoing
-        ufw allow ssh
-        ufw allow http
-        ufw allow https
-        ufw allow 21/tcp   # FTP
-        ufw allow 25/tcp   # SMTP
-        ufw allow 53       # DNS
-        ufw allow 110/tcp  # POP3
-        ufw allow 143/tcp  # IMAP
-        ufw allow 465/tcp  # SMTPS
-        ufw allow 587/tcp  # SMTP Submission
-        ufw allow 993/tcp  # IMAPS
-        ufw allow 995/tcp  # POP3S
-        ufw --force enable
-        
-    elif command -v firewall-cmd &> /dev/null; then
-        # CentOS/RHEL/Fedora firewall
-        systemctl enable firewalld
-        systemctl start firewalld
-        firewall-cmd --permanent --add-service=ssh
-        firewall-cmd --permanent --add-service=http
-        firewall-cmd --permanent --add-service=https
-        firewall-cmd --permanent --add-service=ftp
-        firewall-cmd --permanent --add-service=smtp
-        firewall-cmd --permanent --add-service=pop3
-        firewall-cmd --permanent --add-service=imap
-        firewall-cmd --permanent --add-port=587/tcp
-        firewall-cmd --permanent --add-port=465/tcp
-        firewall-cmd --permanent --add-port=993/tcp
-        firewall-cmd --permanent --add-port=995/tcp
-        firewall-cmd --reload
-    fi
+    # CentOS firewall
+    systemctl enable firewalld
+    systemctl start firewalld
+    firewall-cmd --permanent --add-service=ssh
+    firewall-cmd --permanent --add-service=http
+    firewall-cmd --permanent --add-service=https
+    firewall-cmd --permanent --add-service=ftp
+    firewall-cmd --permanent --add-service=smtp
+    firewall-cmd --permanent --add-service=pop3
+    firewall-cmd --permanent --add-service=imap
+    firewall-cmd --permanent --add-port=587/tcp
+    firewall-cmd --permanent --add-port=465/tcp
+    firewall-cmd --permanent --add-port=993/tcp
+    firewall-cmd --permanent --add-port=995/tcp
+    firewall-cmd --reload
 }
 
 # Setup fail2ban

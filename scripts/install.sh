@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 # HostPanel Pro - Universal VPS Installation Script
@@ -88,7 +87,7 @@ install_dependencies() {
                 php8.1-mbstring php8.1-xml php8.1-zip php8.1-intl \
                 certbot python3-certbot-nginx ufw fail2ban \
                 htop iotop build-essential software-properties-common \
-                unzip zip bc
+                unzip zip bc expect
             
             # Install Node.js
             curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash -
@@ -110,7 +109,7 @@ install_dependencies() {
                 php php-fpm php-mysql php-curl php-gd \
                 php-mbstring php-xml php-zip php-intl \
                 certbot python3-certbot-nginx firewalld fail2ban \
-                htop iotop gcc gcc-c++ make unzip zip bc
+                htop iotop gcc gcc-c++ make unzip zip bc expect
             
             # Install Node.js
             curl -fsSL https://rpm.nodesource.com/setup_${NODE_VERSION}.x | bash -
@@ -124,7 +123,7 @@ install_dependencies() {
                 php8 php8-fpm php8-mysql php8-curl php8-gd \
                 php8-mbstring php8-dom php8-zip php8-intl \
                 certbot python3-certbot-nginx firewalld fail2ban \
-                htop iotop gcc gcc-c++ make unzip zip bc
+                htop iotop gcc gcc-c++ make unzip zip bc expect
             
             # Install Node.js
             zypper addrepo https://rpm.nodesource.com/pub_${NODE_VERSION}.x/opensuse/leap/15.4/ nodesource
@@ -155,10 +154,39 @@ setup_mysql() {
     systemctl start mysql mysqld mariadb 2>/dev/null || true
     
     # Wait for MySQL to start
-    sleep 5
+    sleep 10
     
-    # Secure MySQL installation
-    mysql --user=root <<EOF
+    # Check if MySQL is running
+    if ! systemctl is-active --quiet mysql && ! systemctl is-active --quiet mysqld && ! systemctl is-active --quiet mariadb; then
+        error_exit "MySQL failed to start"
+    fi
+    
+    # Set root password and secure installation using expect
+    expect <<EOF
+spawn mysql_secure_installation
+expect "Press y|Y for Yes, any other key for No:"
+send "n\r"
+expect "New password:"
+send "$MYSQL_ROOT_PASSWORD\r"
+expect "Re-enter new password:"
+send "$MYSQL_ROOT_PASSWORD\r"
+expect "Remove anonymous users?"
+send "y\r"
+expect "Disallow root login remotely?"
+send "y\r"
+expect "Remove test database and access to it?"
+send "y\r"
+expect "Reload privilege tables now?"
+send "y\r"
+expect eof
+EOF
+
+    # Alternative method if expect fails - direct SQL execution
+    if [[ $? -ne 0 ]]; then
+        log_warn "Expect method failed, trying alternative MySQL setup..."
+        
+        # Try to connect without password first (fresh installation)
+        mysql --user=root <<EOF || mysql --user=root --password="$MYSQL_ROOT_PASSWORD" <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASSWORD';
 DELETE FROM mysql.user WHERE User='';
 DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
@@ -166,6 +194,7 @@ DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 FLUSH PRIVILEGES;
 EOF
+    fi
 
     # Create HostPanel database and user
     local hostpanel_db_pass=$(generate_password)

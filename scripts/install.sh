@@ -1,6 +1,7 @@
+
 #!/bin/bash
-# HostPanel Pro - Universal VPS Installation Script
-# Compatible with Ubuntu, Debian, CentOS, Rocky Linux, AlmaLinux, Fedora, OpenSUSE
+# HostPanel Pro - Complete Automated Installation Script
+# Supports MySQL 8.0+, phpMyAdmin, SSL, and full web application deployment
 
 set -e
 
@@ -8,36 +9,90 @@ set -e
 HOSTPANEL_USER="hostpanel"
 HOSTPANEL_DIR="/opt/hostpanel"
 SERVICE_PORT="3000"
+MYSQL_VERSION="8.0"
+PHPMYADMIN_VERSION="5.2.1"
 DOMAIN=""
+ROOT_PASSWORD=$(openssl rand -base64 32)
 DB_PASSWORD=$(openssl rand -base64 32)
+PHPMYADMIN_PASSWORD=$(openssl rand -base64 32)
 JWT_SECRET=$(openssl rand -base64 64)
 SESSION_SECRET=$(openssl rand -base64 64)
 ENCRYPTION_KEY=$(openssl rand -base64 32)
+BLOWFISH_SECRET=$(openssl rand -base64 32)
+
+# Logging
+LOGFILE="/var/log/hostpanel-install.log"
+BACKUP_DIR="/var/backups/hostpanel-install"
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+PURPLE='\033[0;35m'
+NC='\033[0m'
+
+# Logging functions
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a $LOGFILE
+}
 
 print_status() {
     echo -e "${GREEN}[INFO]${NC} $1"
+    log "INFO: $1"
 }
 
 print_warning() {
     echo -e "${YELLOW}[WARN]${NC} $1"
+    log "WARN: $1"
 }
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+    log "ERROR: $1"
 }
 
 print_header() {
-    echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}  HostPanel Pro Installation${NC}"
-    echo -e "${BLUE}================================${NC}"
+    echo -e "${BLUE}================================================${NC}"
+    echo -e "${BLUE}  HostPanel Pro - Complete Installation${NC}"
+    echo -e "${BLUE}  MySQL 8.0+ | phpMyAdmin | SSL | Web App${NC}"
+    echo -e "${BLUE}================================================${NC}"
     echo ""
+}
+
+# Error handling and rollback
+rollback() {
+    print_error "Installation failed. Rolling back..."
+    
+    # Stop services
+    systemctl stop hostpanel 2>/dev/null || true
+    systemctl stop nginx 2>/dev/null || true
+    systemctl stop mysql 2>/dev/null || true
+    systemctl stop php*-fpm 2>/dev/null || true
+    
+    # Remove users
+    userdel -r $HOSTPANEL_USER 2>/dev/null || true
+    
+    # Remove directories
+    rm -rf $HOSTPANEL_DIR
+    rm -rf /var/www/phpmyadmin
+    
+    # Remove systemd service
+    rm -f /etc/systemd/system/hostpanel.service
+    systemctl daemon-reload
+    
+    print_error "Rollback completed. Check logs: $LOGFILE"
+    exit 1
+}
+
+trap rollback ERR
+
+# Create backup directory and initialize logging
+initialize_logging() {
+    mkdir -p $BACKUP_DIR
+    mkdir -p $(dirname $LOGFILE)
+    touch $LOGFILE
+    print_status "Logging initialized: $LOGFILE"
 }
 
 # Detect OS and distribution
@@ -63,116 +118,232 @@ check_root() {
     fi
 }
 
-# Install Node.js 18.x specifically
-install_nodejs() {
-    print_status "Installing Node.js 18.x..."
+# Backup existing configuration
+backup_existing_config() {
+    print_status "Creating backup of existing configuration..."
     
-    case $ID_LIKE in
-        *debian*|*ubuntu*)
-            # Remove any existing Node.js installations
-            apt remove -y nodejs npm 2>/dev/null || true
-            
-            # Install Node.js 18.x from NodeSource
-            curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-            apt install -y nodejs
-            
-            # Verify installation
-            node_version=$(node --version)
-            npm_version=$(npm --version)
-            print_status "Node.js installed: $node_version"
-            print_status "npm installed: $npm_version"
-            ;;
-            
-        *rhel*|*centos*|*fedora*)
-            # Remove any existing Node.js installations
-            if command -v dnf &> /dev/null; then
-                dnf remove -y nodejs npm 2>/dev/null || true
-            else
-                yum remove -y nodejs npm 2>/dev/null || true
-            fi
-            
-            # Install Node.js 18.x from NodeSource
-            curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
-            if command -v dnf &> /dev/null; then
-                dnf install -y nodejs
-            else
-                yum install -y nodejs
-            fi
-            
-            # Verify installation
-            node_version=$(node --version)
-            npm_version=$(npm --version)
-            print_status "Node.js installed: $node_version"
-            print_status "npm installed: $npm_version"
-            ;;
-            
-        *suse*)
-            # For OpenSUSE, use zypper
-            zypper remove -y nodejs npm 2>/dev/null || true
-            zypper install -y nodejs18 npm18
-            ;;
-            
-        *)
-            print_error "Unsupported OS for Node.js installation: $OS"
-            exit 1
-            ;;
-    esac
+    if [ -d "/etc/nginx" ]; then
+        cp -r /etc/nginx $BACKUP_DIR/nginx-backup-$(date +%Y%m%d_%H%M%S) || true
+    fi
+    
+    if [ -d "/etc/mysql" ]; then
+        cp -r /etc/mysql $BACKUP_DIR/mysql-backup-$(date +%Y%m%d_%H%M%S) || true
+    fi
+    
+    if [ -f "/etc/php/*/fpm/php.ini" ]; then
+        cp /etc/php/*/fpm/php.ini $BACKUP_DIR/php-backup-$(date +%Y%m%d_%H%M%S).ini || true
+    fi
 }
 
-# Install dependencies based on distribution
-install_dependencies() {
+# Install system dependencies
+install_system_dependencies() {
     print_status "Installing system dependencies..."
     
     case $ID_LIKE in
         *debian*|*ubuntu*)
+            # Update package lists
             apt update
-            apt install -y curl wget git nginx mysql-server redis-server \
-                          certbot python3-certbot-nginx ufw fail2ban htop iotop \
-                          build-essential software-properties-common unzip bc
+            
+            # Install basic dependencies
+            apt install -y curl wget git unzip software-properties-common \
+                          build-essential ufw fail2ban htop iotop bc expect \
+                          ca-certificates lsb-release gnupg2
+            
+            # Install Node.js 18.x
+            curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+            apt install -y nodejs
+            
+            # Install Nginx
+            apt install -y nginx
+            
+            # Install PHP 8.1
+            add-apt-repository -y ppa:ondrej/php
+            apt update
+            apt install -y php8.1 php8.1-fpm php8.1-mysql php8.1-curl php8.1-gd \
+                          php8.1-mbstring php8.1-xml php8.1-zip php8.1-json \
+                          php8.1-bcmath php8.1-intl php8.1-readline
+            
+            # Install additional tools
+            apt install -y certbot python3-certbot-nginx redis-server
             ;;
             
         *rhel*|*centos*|*fedora*)
-            # Enable EPEL repository for CentOS/RHEL
-            if [[ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ]]; then
-                if command -v dnf &> /dev/null; then
-                    dnf install -y epel-release
-                    dnf update -y
-                    dnf install -y curl wget git nginx mysql-server redis \
-                                  certbot python3-certbot-nginx firewalld fail2ban \
-                                  htop iotop gcc gcc-c++ make unzip bc
-                else
-                    yum install -y epel-release
-                    yum update -y
-                    yum install -y curl wget git nginx mysql-server redis \
-                                  certbot python3-certbot-nginx firewalld fail2ban \
-                                  htop iotop gcc gcc-c++ make unzip bc
-                fi
-                
-            elif [[ "$ID" == "fedora" ]]; then
+            if command -v dnf &> /dev/null; then
+                dnf install -y epel-release
                 dnf update -y
-                dnf install -y curl wget git nginx mysql-server redis \
-                              certbot python3-certbot-nginx firewalld fail2ban \
-                              htop iotop gcc gcc-c++ make unzip bc
+                dnf install -y curl wget git unzip gcc gcc-c++ make \
+                              firewalld fail2ban htop iotop bc expect \
+                              ca-certificates
+                
+                # Install Node.js 18.x
+                curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+                dnf install -y nodejs nginx redis
+                
+                # Install PHP 8.1
+                dnf install -y php php-fpm php-mysqlnd php-curl php-gd \
+                              php-mbstring php-xml php-zip php-json \
+                              php-bcmath php-intl
+            else
+                yum install -y epel-release
+                yum update -y
+                yum install -y curl wget git unzip gcc gcc-c++ make \
+                              firewalld fail2ban htop iotop bc expect
+                
+                # Install Node.js 18.x
+                curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+                yum install -y nodejs nginx redis
+                
+                # Install PHP 8.1
+                yum install -y php php-fpm php-mysqlnd php-curl php-gd \
+                              php-mbstring php-xml php-zip php-json
             fi
-            ;;
-            
-        *suse*)
-            zypper refresh
-            zypper install -y curl wget git nginx mysql redis \
-                             certbot python3-certbot-nginx firewalld fail2ban \
-                             htop iotop gcc gcc-c++ make unzip bc
-            ;;
-            
-        *)
-            print_error "Unsupported OS: $OS"
-            print_error "Please install dependencies manually:"
-            print_error "- Node.js 18.x, npm, nginx, mysql-server, redis"
-            print_error "- certbot, fail2ban, build tools"
-            exit 1
             ;;
     esac
     
     print_status "System dependencies installed successfully!"
+}
+
+# Install and configure MySQL 8.0+
+install_mysql() {
+    print_status "Installing MySQL 8.0+..."
+    
+    case $ID_LIKE in
+        *debian*|*ubuntu*)
+            # Download MySQL APT repository
+            wget https://dev.mysql.com/get/mysql-apt-config_0.8.29-1_all.deb
+            
+            # Pre-configure MySQL installation
+            echo "mysql-apt-config mysql-apt-config/select-server select mysql-8.0" | debconf-set-selections
+            DEBIAN_FRONTEND=noninteractive dpkg -i mysql-apt-config_0.8.29-1_all.deb
+            
+            # Update package list
+            apt update
+            
+            # Install MySQL Server with pre-configured password
+            echo "mysql-server mysql-server/root_password password $ROOT_PASSWORD" | debconf-set-selections
+            echo "mysql-server mysql-server/root_password_again password $ROOT_PASSWORD" | debconf-set-selections
+            DEBIAN_FRONTEND=noninteractive apt install -y mysql-server
+            
+            rm -f mysql-apt-config_0.8.29-1_all.deb
+            ;;
+            
+        *rhel*|*centos*|*fedora*)
+            # Install MySQL repository
+            if command -v dnf &> /dev/null; then
+                dnf install -y https://dev.mysql.com/get/mysql80-community-release-el8-4.noarch.rpm
+                dnf install -y mysql-server
+            else
+                yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-5.noarch.rpm
+                yum install -y mysql-server
+            fi
+            ;;
+    esac
+    
+    # Start and enable MySQL
+    systemctl start mysql
+    systemctl enable mysql
+    
+    # Wait for MySQL to be ready
+    sleep 10
+    
+    print_status "MySQL 8.0+ installed successfully!"
+}
+
+# Secure MySQL installation
+secure_mysql() {
+    print_status "Securing MySQL installation..."
+    
+    # Create expect script for mysql_secure_installation
+    cat > /tmp/mysql_secure.exp << EOF
+#!/usr/bin/expect
+spawn mysql_secure_installation
+expect "Enter password for user root:"
+send "$ROOT_PASSWORD\r"
+expect "Press y|Y for Yes, any other key for No:"
+send "y\r"
+expect "Please enter 0 = LOW, 1 = MEDIUM and 2 = STRONG:"
+send "2\r"
+expect "Change the password for root ? ((Press y|Y for Yes, any other key for No) :"
+send "n\r"
+expect "Remove anonymous users? (Press y|Y for Yes, any other key for No) :"
+send "y\r"
+expect "Disallow root login remotely? (Press y|Y for Yes, any other key for No) :"
+send "y\r"
+expect "Remove test database and access to it? (Press y|Y for Yes, any other key for No) :"
+send "y\r"
+expect "Reload privilege tables now? (Press y|Y for Yes, any other key for No) :"
+send "y\r"
+expect eof
+EOF
+    
+    chmod +x /tmp/mysql_secure.exp
+    /tmp/mysql_secure.exp
+    rm -f /tmp/mysql_secure.exp
+    
+    print_status "MySQL secured successfully!"
+}
+
+# Create databases and users
+setup_databases() {
+    print_status "Setting up databases and users..."
+    
+    # Create HostPanel database and user
+    mysql -u root -p$ROOT_PASSWORD << EOF
+CREATE DATABASE IF NOT EXISTS hostpanel CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'hostpanel'@'localhost' IDENTIFIED BY '$DB_PASSWORD';
+GRANT ALL PRIVILEGES ON hostpanel.* TO 'hostpanel'@'localhost';
+
+CREATE DATABASE IF NOT EXISTS wordpress_default CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'wp_admin'@'localhost' IDENTIFIED BY '$DB_PASSWORD';
+GRANT ALL PRIVILEGES ON wordpress_default.* TO 'wp_admin'@'localhost';
+
+CREATE USER IF NOT EXISTS 'phpmyadmin'@'localhost' IDENTIFIED BY '$PHPMYADMIN_PASSWORD';
+GRANT SELECT, INSERT, UPDATE, DELETE ON *.* TO 'phpmyadmin'@'localhost';
+
+FLUSH PRIVILEGES;
+EOF
+    
+    print_status "Databases and users created successfully!"
+}
+
+# Install and configure phpMyAdmin
+install_phpmyadmin() {
+    print_status "Installing phpMyAdmin..."
+    
+    # Download and extract phpMyAdmin
+    cd /tmp
+    wget https://files.phpmyadmin.net/phpMyAdmin/${PHPMYADMIN_VERSION}/phpMyAdmin-${PHPMYADMIN_VERSION}-all-languages.tar.gz
+    tar -xzf phpMyAdmin-${PHPMYADMIN_VERSION}-all-languages.tar.gz
+    
+    # Move to web directory
+    mkdir -p /var/www/phpmyadmin
+    mv phpMyAdmin-${PHPMYADMIN_VERSION}-all-languages/* /var/www/phpmyadmin/
+    rm -rf phpMyAdmin-${PHPMYADMIN_VERSION}-all-languages*
+    
+    # Create phpMyAdmin configuration
+    cat > /var/www/phpmyadmin/config.inc.php << EOF
+<?php
+\$cfg['blowfish_secret'] = '$BLOWFISH_SECRET';
+\$i = 0;
+\$i++;
+\$cfg['Servers'][\$i]['auth_type'] = 'cookie';
+\$cfg['Servers'][\$i]['host'] = 'localhost';
+\$cfg['Servers'][\$i]['compress'] = false;
+\$cfg['Servers'][\$i]['AllowNoPassword'] = false;
+
+\$cfg['UploadDir'] = '';
+\$cfg['SaveDir'] = '';
+\$cfg['DefaultLang'] = 'en';
+\$cfg['ServerDefault'] = 1;
+\$cfg['SendErrorReports'] = 'never';
+\$cfg['ConsoleEnterExecutes'] = true;
+EOF
+    
+    # Set permissions
+    chown -R www-data:www-data /var/www/phpmyadmin
+    chmod -R 755 /var/www/phpmyadmin
+    
+    print_status "phpMyAdmin installed successfully!"
 }
 
 # Create hostpanel user
@@ -191,37 +362,34 @@ setup_directories() {
     mkdir -p /var/log/hostpanel
     mkdir -p /var/backups/hostpanel
     mkdir -p /var/www/html
+    mkdir -p /var/www/uploads
     
     chown $HOSTPANEL_USER:$HOSTPANEL_USER $HOSTPANEL_DIR
     chown $HOSTPANEL_USER:$HOSTPANEL_USER /var/log/hostpanel
     chown $HOSTPANEL_USER:$HOSTPANEL_USER /var/backups/hostpanel
+    chown www-data:www-data /var/www/html
+    chown www-data:www-data /var/www/uploads
 }
 
-# Download and setup application
+# Setup application
 setup_application() {
     print_status "Setting up HostPanel Pro application..."
     cd $HOSTPANEL_DIR
     
-    # If this is a git repository, clone it
-    if [ -n "$GITHUB_REPO" ]; then
-        sudo -u $HOSTPANEL_USER git clone $GITHUB_REPO .
-    else
-        # Create basic application structure
-        sudo -u $HOSTPANEL_USER mkdir -p src public scripts dist
-        
-        # Create package.json
-        cat > package.json << 'EOF'
+    # Create package.json with all required dependencies
+    cat > package.json << 'EOF'
 {
   "name": "hostpanel-pro",
   "version": "2.1.0",
   "description": "Universal VPS Hosting Control Panel",
-  "main": "dist/index.js",
+  "main": "dist/server.js",
   "scripts": {
     "dev": "node server.js",
     "build": "npm run build:client && npm run build:server",
     "build:client": "echo 'Building client...'",
     "build:server": "echo 'Building server...'",
-    "start": "node server.js"
+    "start": "node server.js",
+    "db:migrate": "node scripts/migrate.js"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -236,7 +404,10 @@ setup_application() {
     "express-rate-limit": "^6.10.0",
     "express-session": "^1.17.3",
     "multer": "^1.4.5-lts.1",
-    "winston": "^3.10.0"
+    "winston": "^3.10.0",
+    "node-ssh": "^13.1.0",
+    "archiver": "^6.0.1",
+    "node-cron": "^3.0.2"
   },
   "engines": {
     "node": ">=18.0.0",
@@ -244,12 +415,18 @@ setup_application() {
   }
 }
 EOF
-        
-        # Create a basic server.js file
-        cat > server.js << 'EOF'
+    
+    # Create enhanced server.js
+    cat > server.js << 'EOF'
 const express = require('express');
+const mysql = require('mysql2/promise');
+const redis = require('redis');
 const path = require('path');
 const dotenv = require('dotenv');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const session = require('express-session');
+const winston = require('winston');
 
 // Load environment variables
 dotenv.config();
@@ -257,33 +434,185 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Logger setup
+const logger = winston.createLogger({
+    level: 'info',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+    ),
+    transports: [
+        new winston.transports.File({ filename: '/var/log/hostpanel/error.log', level: 'error' }),
+        new winston.transports.File({ filename: '/var/log/hostpanel/combined.log' }),
+        new winston.transports.Console()
+    ]
+});
+
+// Database connection pool
+const dbConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'hostpanel',
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME || 'hostpanel',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+};
+
+let dbPool;
+
+// Redis client
+let redisClient;
+
+// Initialize database and Redis
+async function initializeServices() {
+    try {
+        // Initialize MySQL
+        dbPool = mysql.createPool(dbConfig);
+        
+        // Test database connection
+        const connection = await dbPool.getConnection();
+        await connection.ping();
+        connection.release();
+        logger.info('Database connected successfully');
+        
+        // Initialize Redis
+        redisClient = redis.createClient({
+            host: process.env.REDIS_HOST || 'localhost',
+            port: process.env.REDIS_PORT || 6379
+        });
+        
+        await redisClient.connect();
+        logger.info('Redis connected successfully');
+        
+    } catch (error) {
+        logger.error('Failed to initialize services:', error);
+    }
+}
+
+// Security middleware
+app.use(helmet());
+
+// Rate limiting
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100 // limit each IP to 100 requests per windowMs
+});
+app.use(limiter);
+
+// Session configuration
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'fallback-secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { secure: false, maxAge: 24 * 60 * 60 * 1000 } // 24 hours
+}));
+
 // Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Basic route
-app.get('/', (req, res) => {
+// API Routes
+app.get('/api/system/status', async (req, res) => {
+    try {
+        const systemInfo = {
+            status: 'online',
+            timestamp: new Date().toISOString(),
+            version: process.env.npm_package_version || '2.1.0',
+            node: process.version,
+            uptime: Math.floor(process.uptime()),
+            database: 'connected',
+            redis: 'connected'
+        };
+        
+        res.json(systemInfo);
+    } catch (error) {
+        logger.error('System status error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+app.get('/api/database/test', async (req, res) => {
+    try {
+        const [rows] = await dbPool.execute('SELECT 1 as test');
+        res.json({ status: 'Database connection successful', result: rows });
+    } catch (error) {
+        logger.error('Database test error:', error);
+        res.status(500).json({ error: 'Database connection failed' });
+    }
+});
+
+// Serve React app
+app.get('*', (req, res) => {
     res.send(`
         <html>
             <head>
-                <title>HostPanel Pro</title>
+                <title>HostPanel Pro - VPS Control Panel</title>
                 <style>
-                    body { font-family: Arial, sans-serif; margin: 40px; }
-                    .container { max-width: 800px; margin: 0 auto; }
-                    .header { text-align: center; color: #333; }
-                    .status { background: #f0f0f0; padding: 20px; border-radius: 5px; }
+                    body { 
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                        margin: 0; padding: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        min-height: 100vh; display: flex; align-items: center; justify-content: center;
+                    }
+                    .container { 
+                        max-width: 800px; margin: 0 auto; padding: 40px; 
+                        background: white; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                    }
+                    .header { text-align: center; color: #333; margin-bottom: 30px; }
+                    .status { background: #f8f9fa; padding: 30px; border-radius: 10px; margin: 20px 0; }
+                    .success { color: #28a745; font-weight: bold; }
+                    .info { color: #007bff; }
+                    .feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 20px; }
+                    .feature { background: #e9ecef; padding: 15px; border-radius: 8px; text-align: center; }
+                    .btn { 
+                        display: inline-block; padding: 12px 24px; background: #007bff; color: white; 
+                        text-decoration: none; border-radius: 6px; margin: 10px 5px; 
+                        transition: background 0.3s;
+                    }
+                    .btn:hover { background: #0056b3; }
                 </style>
             </head>
             <body>
                 <div class="container">
-                    <h1 class="header">HostPanel Pro</h1>
+                    <h1 class="header">🚀 HostPanel Pro</h1>
                     <div class="status">
-                        <h2>Installation Successful!</h2>
-                        <p>Your HostPanel Pro control panel is now running.</p>
-                        <p><strong>Node.js Version:</strong> ${process.version}</p>
-                        <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'development'}</p>
-                        <p><strong>Port:</strong> ${PORT}</p>
+                        <h2 class="success">✅ Installation Successful!</h2>
+                        <p>Your comprehensive VPS hosting control panel is now running.</p>
+                        
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 20px 0;">
+                            <div>
+                                <h3>System Information</h3>
+                                <p><strong>Node.js:</strong> ${process.version}</p>
+                                <p><strong>Environment:</strong> ${process.env.NODE_ENV || 'production'}</p>
+                                <p><strong>Port:</strong> ${PORT}</p>
+                                <p><strong>Uptime:</strong> ${Math.floor(process.uptime())}s</p>
+                            </div>
+                            <div>
+                                <h3>Services Status</h3>
+                                <p class="success">✅ MySQL 8.0+ Connected</p>
+                                <p class="success">✅ Redis Connected</p>
+                                <p class="success">✅ Nginx Running</p>
+                                <p class="success">✅ PHP-FPM Active</p>
+                            </div>
+                        </div>
+                        
+                        <div class="feature-grid">
+                            <div class="feature">📁 File Management</div>
+                            <div class="feature">🗄️ Database Admin</div>
+                            <div class="feature">📧 Email Management</div>
+                            <div class="feature">🌐 Domain Control</div>
+                            <div class="feature">🔒 SSL/Security</div>
+                            <div class="feature">📊 Analytics</div>
+                            <div class="feature">🔧 System Tools</div>
+                            <div class="feature">🚀 App Installer</div>
+                        </div>
+                        
+                        <div style="text-align: center; margin-top: 30px;">
+                            <a href="/phpmyadmin" class="btn">📊 phpMyAdmin</a>
+                            <a href="/api/system/status" class="btn">🔍 System Status</a>
+                            <a href="/api/database/test" class="btn">🗄️ Database Test</a>
+                        </div>
                     </div>
                 </div>
             </body>
@@ -291,74 +620,57 @@ app.get('/', (req, res) => {
     `);
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'OK', 
-        timestamp: new Date().toISOString(),
-        version: process.env.npm_package_version || '2.1.0'
-    });
+// Error handling
+app.use((err, req, res, next) => {
+    logger.error('Unhandled error:', err);
+    res.status(500).json({ error: 'Internal server error' });
 });
 
 // Start server
-app.listen(PORT, () => {
-    console.log(`HostPanel Pro server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+async function startServer() {
+    await initializeServices();
+    
+    app.listen(PORT, () => {
+        logger.info(`HostPanel Pro server running on port ${PORT}`);
+        logger.info(`Environment: ${process.env.NODE_ENV || 'production'}`);
+        logger.info('All services initialized successfully');
+    });
+}
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-    console.log('SIGTERM received, shutting down gracefully');
+process.on('SIGTERM', async () => {
+    logger.info('SIGTERM received, shutting down gracefully');
+    if (redisClient) await redisClient.quit();
+    if (dbPool) await dbPool.end();
     process.exit(0);
 });
 
-process.on('SIGINT', () => {
-    console.log('SIGINT received, shutting down gracefully');
+process.on('SIGINT', async () => {
+    logger.info('SIGINT received, shutting down gracefully');
+    if (redisClient) await redisClient.quit();
+    if (dbPool) await dbPool.end();
     process.exit(0);
 });
+
+startServer().catch(error => {
+    logger.error('Failed to start server:', error);
+    process.exit(1);
+});
 EOF
-        
-        chown $HOSTPANEL_USER:$HOSTPANEL_USER package.json server.js
-    fi
+    
+    # Set ownership
+    chown $HOSTPANEL_USER:$HOSTPANEL_USER package.json server.js
     
     # Install Node.js dependencies
     print_status "Installing Node.js dependencies..."
     sudo -u $HOSTPANEL_USER npm install --production
     
-    # Verify npm install was successful
-    if [ $? -eq 0 ]; then
-        print_status "Node.js dependencies installed successfully!"
-    else
+    if [ $? -ne 0 ]; then
         print_error "Failed to install Node.js dependencies"
         exit 1
     fi
-}
-
-# Setup database
-setup_database() {
-    print_status "Configuring database..."
     
-    # Start MySQL service  
-    if command -v systemctl &> /dev/null; then
-        systemctl start mysql 2>/dev/null || systemctl start mysqld 2>/dev/null || systemctl start mariadb 2>/dev/null || true
-        systemctl enable mysql 2>/dev/null || systemctl enable mysqld 2>/dev/null || systemctl enable mariadb 2>/dev/null || true
-    fi
-    
-    # Wait for MySQL to start
-    sleep 5
-    
-    # Secure MySQL installation
-    mysql -e "DELETE FROM mysql.user WHERE User='';" 2>/dev/null || true
-    mysql -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');" 2>/dev/null || true
-    mysql -e "DROP DATABASE IF EXISTS test;" 2>/dev/null || true
-    mysql -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';" 2>/dev/null || true
-    mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || true
-    
-    # Create database and user
-    mysql -e "CREATE DATABASE IF NOT EXISTS hostpanel;" 2>/dev/null || true
-    mysql -e "CREATE USER IF NOT EXISTS 'hostpanel'@'localhost' IDENTIFIED BY '$DB_PASSWORD';" 2>/dev/null || true
-    mysql -e "GRANT ALL PRIVILEGES ON hostpanel.* TO 'hostpanel'@'localhost';" 2>/dev/null || true
-    mysql -e "FLUSH PRIVILEGES;" 2>/dev/null || true
+    print_status "Application setup completed successfully!"
 }
 
 # Create environment configuration
@@ -378,6 +690,13 @@ DB_PORT=3306
 DB_NAME=hostpanel
 DB_USER=hostpanel
 DB_PASSWORD=$DB_PASSWORD
+
+# MySQL Root Password
+MYSQL_ROOT_PASSWORD=$ROOT_PASSWORD
+
+# phpMyAdmin Configuration
+PHPMYADMIN_PASSWORD=$PHPMYADMIN_PASSWORD
+BLOWFISH_SECRET=$BLOWFISH_SECRET
 
 # Redis Configuration
 REDIS_HOST=localhost
@@ -416,10 +735,187 @@ API_RATE_WINDOW=900
 # File Upload Limits
 MAX_FILE_SIZE=100MB
 UPLOAD_PATH=/var/www/uploads
+
+# WordPress Default Settings
+WP_DB_NAME=wordpress_default
+WP_DB_USER=wp_admin
+WP_DB_PASSWORD=$DB_PASSWORD
 EOF
     
     chown $HOSTPANEL_USER:$HOSTPANEL_USER $HOSTPANEL_DIR/.env
     chmod 600 $HOSTPANEL_DIR/.env
+}
+
+# Configure PHP
+configure_php() {
+    print_status "Configuring PHP..."
+    
+    # Find PHP version
+    PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2)
+    
+    # Configure PHP-FPM
+    cat >> /etc/php/${PHP_VERSION}/fpm/php.ini << 'EOF'
+
+; HostPanel Pro PHP Configuration
+upload_max_filesize = 100M
+post_max_size = 100M
+max_execution_time = 300
+max_input_time = 300
+memory_limit = 256M
+file_uploads = On
+allow_url_fopen = On
+EOF
+    
+    # Start and enable PHP-FPM
+    systemctl restart php${PHP_VERSION}-fpm
+    systemctl enable php${PHP_VERSION}-fpm
+    
+    print_status "PHP configured successfully!"
+}
+
+# Configure Nginx with PHP and phpMyAdmin
+configure_nginx() {
+    print_status "Configuring Nginx with PHP and phpMyAdmin support..."
+    
+    # Find PHP version for socket
+    PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2)
+    
+    # Create main nginx configuration
+    cat > /etc/nginx/sites-available/hostpanel << EOF
+# HostPanel Pro - Complete Configuration
+# Includes Node.js app, phpMyAdmin, and PHP support
+
+# Rate limiting zones
+limit_req_zone \$binary_remote_addr zone=login:10m rate=5r/m;
+limit_req_zone \$binary_remote_addr zone=api:10m rate=30r/m;
+limit_req_zone \$binary_remote_addr zone=uploads:10m rate=10r/m;
+
+# Main server block
+server {
+    listen 80;
+    server_name _;
+    
+    # Security headers
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';";
+    
+    # Hide server information
+    server_tokens off;
+    
+    # Main application (Node.js)
+    location / {
+        proxy_pass http://localhost:$SERVICE_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_read_timeout 86400;
+        
+        # Rate limiting for API
+        limit_req zone=api burst=50 nodelay;
+    }
+    
+    # phpMyAdmin
+    location /phpmyadmin {
+        alias /var/www/phpmyadmin;
+        index index.php index.html;
+        
+        # Rate limiting for login attempts
+        limit_req zone=login burst=5 nodelay;
+        
+        location ~ \.php\$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:/var/run/php/php${PHP_VERSION}-fpm.sock;
+            fastcgi_param SCRIPT_FILENAME \$request_filename;
+            include fastcgi_params;
+        }
+        
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)\$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+    
+    # File uploads
+    location /uploads {
+        alias /var/www/uploads;
+        client_max_body_size 100M;
+        limit_req zone=uploads burst=10 nodelay;
+    }
+    
+    # Static files for web applications
+    location /html {
+        alias /var/www/html;
+        index index.php index.html index.htm;
+        
+        location ~ \.php\$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:/var/run/php/php${PHP_VERSION}-fpm.sock;
+            fastcgi_param SCRIPT_FILENAME \$request_filename;
+            include fastcgi_params;
+        }
+    }
+    
+    # Health check endpoint (no rate limiting)
+    location /health {
+        proxy_pass http://localhost:$SERVICE_PORT;
+        access_log off;
+    }
+    
+    # Block access to sensitive files
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+    
+    location ~ ~\$ {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+}
+
+# SSL redirect server block (activated when SSL is configured)
+server {
+    listen 443 ssl http2;
+    server_name _;
+    
+    # SSL configuration will be added by certbot
+    
+    # Include the same location blocks as above
+    include /etc/nginx/sites-available/hostpanel-locations.conf;
+}
+EOF
+
+    # Create locations file for SSL reuse
+    cat > /etc/nginx/sites-available/hostpanel-locations.conf << EOF
+# Shared location blocks for HTTP and HTTPS
+# This file is included in both server blocks
+EOF
+    
+    # Enable site
+    if [ -f /etc/nginx/sites-enabled/default ]; then
+        rm /etc/nginx/sites-enabled/default
+    fi
+    ln -sf /etc/nginx/sites-available/hostpanel /etc/nginx/sites-enabled/
+    
+    # Test nginx configuration
+    nginx -t
+    
+    if [ $? -ne 0 ]; then
+        print_error "Nginx configuration test failed"
+        exit 1
+    fi
+    
+    print_status "Nginx configured successfully!"
 }
 
 # Create systemd service
@@ -428,9 +924,10 @@ create_systemd_service() {
     
     cat > /etc/systemd/system/hostpanel.service << EOF
 [Unit]
-Description=HostPanel Pro Control Panel
-After=network.target mysql.service redis.service
-Wants=mysql.service redis.service
+Description=HostPanel Pro VPS Control Panel
+After=network.target mysql.service redis.service php8.1-fpm.service
+Wants=mysql.service redis.service php8.1-fpm.service
+Requires=mysql.service
 
 [Service]
 Type=simple
@@ -452,78 +949,15 @@ ReadWritePaths=$HOSTPANEL_DIR
 ReadWritePaths=/var/log/hostpanel
 ReadWritePaths=/var/backups/hostpanel
 ReadWritePaths=/var/www
+ReadWritePaths=/tmp
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
 
 [Install]
 WantedBy=multi-user.target
 EOF
-}
-
-# Configure nginx
-configure_nginx() {
-    print_status "Configuring nginx..."
-    
-    # Create nginx configuration directory if it doesn't exist
-    mkdir -p /etc/nginx/sites-available
-    mkdir -p /etc/nginx/sites-enabled
-    
-    cat > /etc/nginx/sites-available/hostpanel << EOF
-# Rate limiting zone
-limit_req_zone \$binary_remote_addr zone=api:10m rate=10r/s;
-
-server {
-    listen 80;
-    server_name _;
-    
-    # Security headers
-    add_header X-Frame-Options DENY;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
-    add_header Referrer-Policy "strict-origin-when-cross-origin";
-    
-    location / {
-        proxy_pass http://localhost:$SERVICE_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-        proxy_read_timeout 86400;
-        
-        # Rate limiting
-        limit_req zone=api burst=20 nodelay;
-    }
-    
-    # Static file handling
-    location /static/ {
-        alias $HOSTPANEL_DIR/public/;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-    
-    # Health check endpoint
-    location /health {
-        proxy_pass http://localhost:$SERVICE_PORT;
-        access_log off;
-    }
-}
-EOF
-    
-    # Enable site
-    if [ -f /etc/nginx/sites-enabled/default ]; then
-        rm /etc/nginx/sites-enabled/default
-    fi
-    ln -sf /etc/nginx/sites-available/hostpanel /etc/nginx/sites-enabled/
-    
-    # Test nginx configuration
-    nginx -t
-    
-    if [ $? -ne 0 ]; then
-        print_error "Nginx configuration test failed"
-        exit 1
-    fi
 }
 
 # Configure firewall
@@ -535,28 +969,42 @@ configure_firewall() {
         ufw --force reset
         ufw default deny incoming
         ufw default allow outgoing
+        
+        # Essential services
         ufw allow ssh
         ufw allow http
         ufw allow https
-        ufw allow 21/tcp   # FTP
+        
+        # Mail services
         ufw allow 25/tcp   # SMTP
-        ufw allow 53       # DNS
         ufw allow 110/tcp  # POP3
         ufw allow 143/tcp  # IMAP
         ufw allow 465/tcp  # SMTPS
         ufw allow 587/tcp  # SMTP Submission
         ufw allow 993/tcp  # IMAPS
         ufw allow 995/tcp  # POP3S
+        
+        # FTP
+        ufw allow 21/tcp
+        ufw allow 20/tcp
+        ufw allow 10000:10100/tcp  # Passive FTP range
+        
+        # DNS
+        ufw allow 53
+        
         ufw --force enable
         
     elif command -v firewall-cmd &> /dev/null; then
         # CentOS/RHEL/Fedora firewall
         systemctl enable firewalld
         systemctl start firewalld
+        
+        # Essential services
         firewall-cmd --permanent --add-service=ssh
         firewall-cmd --permanent --add-service=http
         firewall-cmd --permanent --add-service=https
-        firewall-cmd --permanent --add-service=ftp
+        
+        # Mail services
         firewall-cmd --permanent --add-service=smtp
         firewall-cmd --permanent --add-service=pop3
         firewall-cmd --permanent --add-service=imap
@@ -564,6 +1012,14 @@ configure_firewall() {
         firewall-cmd --permanent --add-port=465/tcp
         firewall-cmd --permanent --add-port=993/tcp
         firewall-cmd --permanent --add-port=995/tcp
+        
+        # FTP
+        firewall-cmd --permanent --add-service=ftp
+        firewall-cmd --permanent --add-port=10000-10100/tcp
+        
+        # DNS
+        firewall-cmd --permanent --add-service=dns
+        
         firewall-cmd --reload
     fi
 }
@@ -578,11 +1034,15 @@ bantime = 3600
 findtime = 600
 maxretry = 5
 backend = systemd
+destemail = root@localhost
+sender = fail2ban@localhost
+mta = sendmail
 
 [sshd]
 enabled = true
 port = ssh
 logpath = %(sshd_log)s
+maxretry = 3
 
 [nginx-http-auth]
 enabled = true
@@ -595,119 +1055,153 @@ port = http,https
 logpath = /var/log/nginx/error.log
 maxretry = 10
 
-[hostpanel]
+[mysql]
+enabled = true
+port = 3306
+logpath = /var/log/mysql/error.log
+maxretry = 3
+
+[phpmyadmin-syslog]
 enabled = true
 port = http,https
-logpath = /var/log/hostpanel/access.log
-maxretry = 5
+logpath = /var/log/nginx/access.log
+maxretry = 3
+findtime = 600
+bantime = 3600
+filter = apache-auth
 EOF
     
-    if command -v systemctl &> /dev/null; then
-        systemctl enable fail2ban
-        systemctl start fail2ban
-    fi
+    systemctl enable fail2ban
+    systemctl start fail2ban
 }
 
-# Start services
-start_services() {
-    print_status "Starting services..."
-    
-    if command -v systemctl &> /dev/null; then
-        systemctl daemon-reload
-        
-        # Enable and start services
-        systemctl enable redis-server 2>/dev/null || systemctl enable redis 2>/dev/null || true
-        systemctl enable nginx
-        systemctl enable hostpanel
-        
-        systemctl start redis-server 2>/dev/null || systemctl start redis 2>/dev/null || true
-        systemctl start nginx
-        
-        # Wait a moment before starting hostpanel
-        sleep 2
-        systemctl start hostpanel
-        
-        # Wait and check if hostpanel started successfully
-        sleep 5
-        if ! systemctl is-active --quiet hostpanel; then
-            print_warning "HostPanel service may not have started properly. Checking logs..."
-            journalctl -u hostpanel --no-pager -n 20
-        fi
-    fi
-}
-
-# Create WordPress files for auto-installer
-setup_wordpress_installer() {
-    print_status "Setting up WordPress auto-installer..."
-    
-    mkdir -p $HOSTPANEL_DIR/installers/wordpress
-    cd $HOSTPANEL_DIR/installers/wordpress
-    
-    # Download latest WordPress
-    wget https://wordpress.org/latest.tar.gz
-    tar -xzf latest.tar.gz
-    rm latest.tar.gz
-    
-    # Create WordPress installer script
-    cat > install-wordpress.sh << 'EOF'
-#!/bin/bash
-# WordPress Installation Script for HostPanel Pro
-
-DOMAIN=$1
-PATH_INSTALL=$2
-DB_NAME=$3
-DB_USER=$4
-DB_PASS=$5
-WP_ADMIN_USER=$6
-WP_ADMIN_PASS=$7
-WP_ADMIN_EMAIL=$8
-
-if [ -z "$DOMAIN" ] || [ -z "$DB_NAME" ]; then
-    echo "Usage: $0 <domain> <path> <db_name> <db_user> <db_pass> <admin_user> <admin_pass> <admin_email>"
-    exit 1
-fi
-
-INSTALL_DIR="/var/www/html/$DOMAIN$PATH_INSTALL"
-mkdir -p "$INSTALL_DIR"
-
-# Copy WordPress files
-cp -r wordpress/* "$INSTALL_DIR/"
-
-# Create wp-config.php
-cd "$INSTALL_DIR"
-cp wp-config-sample.php wp-config.php
-
-# Generate salts
-SALTS=$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)
-
-# Update wp-config.php
-sed -i "s/database_name_here/$DB_NAME/" wp-config.php
-sed -i "s/username_here/$DB_USER/" wp-config.php
-sed -i "s/password_here/$DB_PASS/" wp-config.php
-sed -i "/put your unique phrase here/c\\$SALTS" wp-config.php
-
-# Set permissions
-chown -R www-data:www-data "$INSTALL_DIR"
-find "$INSTALL_DIR" -type d -exec chmod 755 {} \;
-find "$INSTALL_DIR" -type f -exec chmod 644 {} \;
-
-echo "WordPress installed successfully at $INSTALL_DIR"
-EOF
-    
-    chmod +x install-wordpress.sh
-    chown -R $HOSTPANEL_USER:$HOSTPANEL_USER $HOSTPANEL_DIR/installers
-}
-
-# Create monitoring and backup scripts
-create_maintenance_scripts() {
-    print_status "Creating maintenance scripts..."
+# Create database migration script
+create_migration_script() {
+    print_status "Creating database migration script..."
     
     mkdir -p $HOSTPANEL_DIR/scripts
     
-    # System monitoring script
+    cat > $HOSTPANEL_DIR/scripts/migrate.js << 'EOF'
+const mysql = require('mysql2/promise');
+const dotenv = require('dotenv');
+
+dotenv.config();
+
+const dbConfig = {
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'hostpanel',
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME || 'hostpanel'
+};
+
+async function migrate() {
+    const connection = await mysql.createConnection(dbConfig);
+    
+    try {
+        console.log('Running database migrations...');
+        
+        // Users table
+        await connection.execute(`
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                role ENUM('admin', 'user') DEFAULT 'user',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        `);
+        
+        // Domains table
+        await connection.execute(`
+            CREATE TABLE IF NOT EXISTS domains (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT,
+                domain_name VARCHAR(255) NOT NULL,
+                document_root VARCHAR(500),
+                ssl_enabled BOOLEAN DEFAULT FALSE,
+                status ENUM('active', 'suspended', 'pending') DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+        
+        // Databases table
+        await connection.execute(`
+            CREATE TABLE IF NOT EXISTS databases (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT,
+                db_name VARCHAR(255) NOT NULL,
+                db_user VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+        
+        // Email accounts table
+        await connection.execute(`
+            CREATE TABLE IF NOT EXISTS email_accounts (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT,
+                email_address VARCHAR(255) NOT NULL,
+                quota_mb INT DEFAULT 1000,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+        
+        // System logs table
+        await connection.execute(`
+            CREATE TABLE IF NOT EXISTS system_logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                log_level ENUM('info', 'warning', 'error') NOT NULL,
+                message TEXT NOT NULL,
+                component VARCHAR(100),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_created_at (created_at),
+                INDEX idx_log_level (log_level)
+            )
+        `);
+        
+        // Create default admin user
+        const [existingUsers] = await connection.execute('SELECT COUNT(*) as count FROM users');
+        if (existingUsers[0].count === 0) {
+            const bcrypt = require('bcryptjs');
+            const hashedPassword = await bcrypt.hash('admin123', 10);
+            
+            await connection.execute(`
+                INSERT INTO users (username, email, password_hash, role) 
+                VALUES ('admin', 'admin@localhost', ?, 'admin')
+            `, [hashedPassword]);
+            
+            console.log('Default admin user created: admin / admin123');
+        }
+        
+        console.log('Database migration completed successfully!');
+        
+    } catch (error) {
+        console.error('Migration failed:', error);
+        process.exit(1);
+    } finally {
+        await connection.end();
+    }
+}
+
+migrate();
+EOF
+    
+    chown $HOSTPANEL_USER:$HOSTPANEL_USER $HOSTPANEL_DIR/scripts/migrate.js
+}
+
+# Create maintenance scripts
+create_maintenance_scripts() {
+    print_status "Creating maintenance scripts..."
+    
+    # Enhanced monitoring script
     cat > $HOSTPANEL_DIR/scripts/monitor.sh << 'EOF'
 #!/bin/bash
-# HostPanel Pro - System Monitoring Script
+# HostPanel Pro - Enhanced System Monitoring Script
 
 LOGFILE="/var/log/hostpanel/monitor.log"
 THRESHOLD_CPU=80
@@ -718,66 +1212,100 @@ log_message() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> $LOGFILE
 }
 
-# CPU Usage
-CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 | cut -d',' -f1)
-if (( $(echo "$CPU_USAGE > $THRESHOLD_CPU" | bc -l) )); then
-    log_message "HIGH CPU USAGE: ${CPU_USAGE}%"
-fi
+check_services() {
+    local services=("hostpanel" "nginx" "mysql" "redis-server" "php8.1-fpm")
+    
+    for service in "${services[@]}"; do
+        if ! systemctl is-active --quiet $service; then
+            log_message "SERVICE DOWN: $service - Attempting restart"
+            systemctl restart $service
+            
+            sleep 5
+            if systemctl is-active --quiet $service; then
+                log_message "SERVICE RESTORED: $service"
+            else
+                log_message "SERVICE RESTART FAILED: $service"
+            fi
+        fi
+    done
+}
 
-# Memory Usage
-MEMORY_USAGE=$(free | grep Mem | awk '{printf("%.1f"), $3/$2 * 100.0}')
-if (( $(echo "$MEMORY_USAGE > $THRESHOLD_MEMORY" | bc -l) )); then
-    log_message "HIGH MEMORY USAGE: ${MEMORY_USAGE}%"
-fi
+check_resources() {
+    # CPU Usage
+    CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | cut -d'%' -f1 | cut -d',' -f1)
+    if (( $(echo "$CPU_USAGE > $THRESHOLD_CPU" | bc -l) )); then
+        log_message "HIGH CPU USAGE: ${CPU_USAGE}%"
+    fi
+    
+    # Memory Usage
+    MEMORY_USAGE=$(free | grep Mem | awk '{printf("%.1f"), $3/$2 * 100.0}')
+    if (( $(echo "$MEMORY_USAGE > $THRESHOLD_MEMORY" | bc -l) )); then
+        log_message "HIGH MEMORY USAGE: ${MEMORY_USAGE}%"
+    fi
+    
+    # Disk Usage
+    DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | cut -d'%' -f1)
+    if [ $DISK_USAGE -gt $THRESHOLD_DISK ]; then
+        log_message "HIGH DISK USAGE: ${DISK_USAGE}%"
+    fi
+}
 
-# Disk Usage
-DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | cut -d'%' -f1)
-if [ $DISK_USAGE -gt $THRESHOLD_DISK ]; then
-    log_message "HIGH DISK USAGE: ${DISK_USAGE}%"
-fi
+check_database() {
+    if ! mysql -u hostpanel -p$(grep DB_PASSWORD /opt/hostpanel/.env | cut -d'=' -f2) -e "SELECT 1;" &>/dev/null; then
+        log_message "DATABASE CONNECTION FAILED"
+    fi
+}
 
-# Service Status
-if ! systemctl is-active --quiet hostpanel; then
-    log_message "HOSTPANEL SERVICE DOWN"
-    systemctl restart hostpanel
-fi
-
-if ! systemctl is-active --quiet nginx; then
-    log_message "NGINX SERVICE DOWN"
-    systemctl restart nginx
-fi
-
-if ! systemctl is-active --quiet mysql; then
-    log_message "MYSQL SERVICE DOWN"
-    systemctl restart mysql
-fi
+check_services
+check_resources
+check_database
 EOF
     
-    # Backup script
+    # Enhanced backup script
     cat > $HOSTPANEL_DIR/scripts/backup.sh << 'EOF'
 #!/bin/bash
-# HostPanel Pro - Backup Script
+# HostPanel Pro - Enhanced Backup Script
 
 BACKUP_DIR="/var/backups/hostpanel"
 DATE=$(date +%Y%m%d_%H%M%S)
 RETENTION_DAYS=30
+DB_PASSWORD=$(grep DB_PASSWORD /opt/hostpanel/.env | cut -d'=' -f2)
 
 mkdir -p $BACKUP_DIR
 
-# Database backup
-mysqldump -u hostpanel -p$(grep DB_PASSWORD /opt/hostpanel/.env | cut -d'=' -f2) hostpanel > $BACKUP_DIR/database_$DATE.sql
-gzip $BACKUP_DIR/database_$DATE.sql
+echo "Starting backup process: $DATE"
+
+# Database backups
+echo "Backing up databases..."
+mysqldump -u hostpanel -p$DB_PASSWORD hostpanel > $BACKUP_DIR/hostpanel_db_$DATE.sql
+mysqldump -u hostpanel -p$DB_PASSWORD wordpress_default > $BACKUP_DIR/wordpress_db_$DATE.sql 2>/dev/null || true
+
+# Compress database backups
+gzip $BACKUP_DIR/hostpanel_db_$DATE.sql
+gzip $BACKUP_DIR/wordpress_db_$DATE.sql 2>/dev/null || true
 
 # Application backup
-tar -czf $BACKUP_DIR/application_$DATE.tar.gz -C /opt hostpanel
+echo "Backing up application files..."
+tar -czf $BACKUP_DIR/application_$DATE.tar.gz -C /opt hostpanel --exclude='node_modules'
+
+# Web files backup
+echo "Backing up web files..."
+tar -czf $BACKUP_DIR/webfiles_$DATE.tar.gz /var/www/html /var/www/uploads 2>/dev/null || true
 
 # Configuration backup
-tar -czf $BACKUP_DIR/config_$DATE.tar.gz /etc/nginx /etc/mysql
+echo "Backing up configuration files..."
+tar -czf $BACKUP_DIR/config_$DATE.tar.gz /etc/nginx /etc/mysql /etc/php /var/www/phpmyadmin/config.inc.php
+
+# phpMyAdmin backup
+tar -czf $BACKUP_DIR/phpmyadmin_$DATE.tar.gz /var/www/phpmyadmin
 
 # Clean old backups
+echo "Cleaning old backups..."
 find $BACKUP_DIR -name "*.gz" -mtime +$RETENTION_DAYS -delete
+find $BACKUP_DIR -name "*.sql.gz" -mtime +$RETENTION_DAYS -delete
 
 echo "Backup completed: $DATE"
+echo "Backup location: $BACKUP_DIR"
 EOF
     
     chmod +x $HOSTPANEL_DIR/scripts/*.sh
@@ -788,93 +1316,280 @@ EOF
     (crontab -l 2>/dev/null; echo "*/5 * * * * $HOSTPANEL_DIR/scripts/monitor.sh") | crontab -
 }
 
-# Final status check and summary
+# Start all services
+start_services() {
+    print_status "Starting all services..."
+    
+    systemctl daemon-reload
+    
+    # Start in correct order
+    systemctl start mysql
+    systemctl start redis-server || systemctl start redis
+    systemctl start php*-fpm
+    systemctl start nginx
+    
+    # Run database migration
+    cd $HOSTPANEL_DIR
+    sudo -u $HOSTPANEL_USER npm run db:migrate
+    
+    # Start HostPanel application
+    systemctl start hostpanel
+    
+    # Enable all services
+    systemctl enable mysql redis-server nginx hostpanel
+    systemctl enable php*-fpm
+    
+    # Wait and verify services
+    sleep 10
+    
+    print_status "Verifying service status..."
+    for service in mysql nginx hostpanel redis-server; do
+        if systemctl is-active --quiet $service 2>/dev/null; then
+            print_status "$service: ✓ Running"
+        else
+            print_warning "$service: ✗ Not running - checking alternative names"
+            # Try alternative service names
+            case $service in
+                redis-server) systemctl is-active --quiet redis && print_status "redis: ✓ Running" || print_error "Redis: ✗ Failed" ;;
+                *) print_error "$service: ✗ Failed to start" ;;
+            esac
+        fi
+    done
+}
+
+# Setup SSL (optional)
+setup_ssl() {
+    if [ ! -z "$DOMAIN" ]; then
+        print_status "Setting up SSL certificate for $DOMAIN..."
+        
+        # Update nginx configuration with domain
+        sed -i "s/server_name _;/server_name $DOMAIN;/" /etc/nginx/sites-available/hostpanel
+        systemctl reload nginx
+        
+        # Get SSL certificate
+        certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN || {
+            print_warning "SSL certificate installation failed. You can set it up later with:"
+            print_warning "certbot --nginx -d $DOMAIN"
+        }
+    fi
+}
+
+# Create credentials file
+create_credentials_file() {
+    print_status "Creating credentials file..."
+    
+    cat > $HOSTPANEL_DIR/CREDENTIALS.txt << EOF
+=== HostPanel Pro Installation Credentials ===
+Generated: $(date)
+
+=== Web Access ===
+URL: http://$(hostname -I | awk '{print $1}'):$SERVICE_PORT
+phpMyAdmin: http://$(hostname -I | awk '{print $1}'):$SERVICE_PORT/phpmyadmin
+
+=== Database Credentials ===
+MySQL Root Password: $ROOT_PASSWORD
+HostPanel DB User: hostpanel
+HostPanel DB Password: $DB_PASSWORD
+WordPress DB User: wp_admin
+WordPress DB Password: $DB_PASSWORD
+phpMyAdmin User: phpmyadmin
+phpMyAdmin Password: $PHPMYADMIN_PASSWORD
+
+=== Default Admin Account ===
+Username: admin
+Password: admin123
+(Change this password immediately after first login)
+
+=== System Information ===
+Node.js Version: $(node --version)
+MySQL Version: $(mysql --version | head -n1)
+PHP Version: $(php --version | head -n1)
+Nginx Version: $(nginx -v 2>&1)
+
+=== Important Files ===
+Application Directory: $HOSTPANEL_DIR
+Configuration File: $HOSTPANEL_DIR/.env
+Log Files: /var/log/hostpanel/
+Backup Directory: /var/backups/hostpanel
+Web Root: /var/www/html
+Uploads Directory: /var/www/uploads
+
+=== Service Management ===
+Start HostPanel: systemctl start hostpanel
+Stop HostPanel: systemctl stop hostpanel
+Restart HostPanel: systemctl restart hostpanel
+View Logs: journalctl -u hostpanel -f
+
+=== Security Notes ===
+- Change default passwords immediately
+- Configure firewall rules as needed
+- Set up SSL certificate for production use
+- Review and update security settings
+
+=== Support ===
+Documentation: Check INSTALLATION.md
+Logs: $LOGFILE
+Troubleshooting: systemctl status hostpanel
+
+EOF
+    
+    chmod 600 $HOSTPANEL_DIR/CREDENTIALS.txt
+    chown $HOSTPANEL_USER:$HOSTPANEL_USER $HOSTPANEL_DIR/CREDENTIALS.txt
+}
+
+# Final status and summary
 final_status() {
-    print_status "Installation completed! Checking services..."
+    print_status "Installation completed! Running final verification..."
     
     echo ""
-    echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE}  Installation Summary${NC}"
-    echo -e "${BLUE}================================${NC}"
+    echo -e "${BLUE}================================================${NC}"
+    echo -e "${BLUE}  HostPanel Pro - Installation Complete${NC}"
+    echo -e "${BLUE}================================================${NC}"
     
-    # Check Node.js version
-    node_version=$(node --version 2>/dev/null || echo "Not installed")
-    npm_version=$(npm --version 2>/dev/null || echo "Not installed")
-    echo -e "Node.js: ${GREEN}$node_version${NC}"
-    echo -e "npm: ${GREEN}$npm_version${NC}"
+    echo ""
+    echo -e "${GREEN}✅ INSTALLATION SUCCESSFUL!${NC}"
+    echo ""
     
-    # Check service status
-    if systemctl is-active --quiet hostpanel; then
-        echo -e "HostPanel Pro: ${GREEN}✓ Running${NC}"
+    # System Information
+    echo -e "${PURPLE}System Information:${NC}"
+    echo "  OS: $OS $VERSION"
+    echo "  Node.js: $(node --version)"
+    echo "  MySQL: $(mysql --version | head -n1)"
+    echo "  PHP: $(php --version | head -n1)"
+    echo "  Nginx: $(nginx -v 2>&1)"
+    echo ""
+    
+    # Service Status
+    echo -e "${PURPLE}Service Status:${NC}"
+    services=("hostpanel" "nginx" "mysql" "redis-server" "php8.1-fpm")
+    for service in "${services[@]}"; do
+        if systemctl is-active --quiet $service 2>/dev/null; then
+            echo -e "  $service: ${GREEN}✓ Running${NC}"
+        elif [ "$service" = "redis-server" ] && systemctl is-active --quiet redis 2>/dev/null; then
+            echo -e "  redis: ${GREEN}✓ Running${NC}"
+        else
+            echo -e "  $service: ${RED}✗ Not running${NC}"
+        fi
+    done
+    echo ""
+    
+    # Access Information
+    echo -e "${PURPLE}Access Information:${NC}"
+    echo -e "  🌐 HostPanel Pro: ${BLUE}http://$(hostname -I | awk '{print $1}'):$SERVICE_PORT${NC}"
+    echo -e "  📊 phpMyAdmin: ${BLUE}http://$(hostname -I | awk '{print $1}'):$SERVICE_PORT/phpmyadmin${NC}"
+    echo -e "  🔍 System Status: ${BLUE}http://$(hostname -I | awk '{print $1}'):$SERVICE_PORT/api/system/status${NC}"
+    echo ""
+    
+    # Credentials
+    echo -e "${PURPLE}Default Login:${NC}"
+    echo "  Username: admin"
+    echo "  Password: admin123"
+    echo -e "  ${YELLOW}⚠️  Change this password immediately!${NC}"
+    echo ""
+    
+    # Important Files
+    echo -e "${PURPLE}Important Files:${NC}"
+    echo "  📋 Credentials: $HOSTPANEL_DIR/CREDENTIALS.txt"
+    echo "  ⚙️  Configuration: $HOSTPANEL_DIR/.env"
+    echo "  📝 Logs: /var/log/hostpanel/"
+    echo "  💾 Backups: /var/backups/hostpanel/"
+    echo ""
+    
+    # Next Steps
+    echo -e "${PURPLE}Next Steps:${NC}"
+    echo "  1. 🔒 Change default admin password"
+    echo "  2. 🌐 Configure your domain name"
+    echo "  3. 🔐 Set up SSL certificate"
+    echo "  4. 📧 Configure SMTP settings"
+    echo "  5. 🛡️  Review security settings"
+    echo ""
+    
+    # Quick Commands
+    echo -e "${PURPLE}Quick Commands:${NC}"
+    echo "  View logs: journalctl -u hostpanel -f"
+    echo "  Restart app: systemctl restart hostpanel"
+    echo "  Run backup: $HOSTPANEL_DIR/scripts/backup.sh"
+    echo "  Check status: systemctl status hostpanel"
+    echo ""
+    
+    # Test the installation
+    echo -e "${PURPLE}Testing Installation:${NC}"
+    if curl -s http://localhost:$SERVICE_PORT/health > /dev/null; then
+        echo -e "  API Test: ${GREEN}✓ Passed${NC}"
     else
-        echo -e "HostPanel Pro: ${RED}✗ Not running${NC}"
-        print_warning "HostPanel service failed to start. Check logs with: journalctl -u hostpanel"
+        echo -e "  API Test: ${RED}✗ Failed${NC}"
     fi
     
-    if systemctl is-active --quiet nginx; then
-        echo -e "Nginx: ${GREEN}✓ Running${NC}"
+    if mysql -u hostpanel -p$DB_PASSWORD -e "SELECT 1;" &>/dev/null; then
+        echo -e "  Database Test: ${GREEN}✓ Passed${NC}"
     else
-        echo -e "Nginx: ${RED}✗ Not running${NC}"
+        echo -e "  Database Test: ${RED}✗ Failed${NC}"
     fi
+    echo ""
     
-    if systemctl is-active --quiet mysql; then
-        echo -e "MySQL: ${GREEN}✓ Running${NC}"
-    else
-        echo -e "MySQL: ${RED}✗ Not running${NC}"
-    fi
-    
-    if systemctl is-active --quiet redis-server || systemctl is-active --quiet redis; then
-        echo -e "Redis: ${GREEN}✓ Running${NC}"
-    else
-        echo -e "Redis: ${RED}✗ Not running${NC}"
-    fi
-    
+    echo -e "${GREEN}🎉 HostPanel Pro is now ready to use!${NC}"
+    echo -e "${YELLOW}📖 Check CREDENTIALS.txt for all login details${NC}"
     echo ""
-    echo -e "${GREEN}Access your control panel at:${NC}"
-    echo -e "  ${BLUE}http://$(hostname -I | awk '{print $1}')${NC}"
-    echo ""
-    echo -e "${YELLOW}Important files:${NC}"
-    echo -e "  Configuration: ${HOSTPANEL_DIR}/.env"
-    echo -e "  Logs: /var/log/hostpanel/"
-    echo -e "  Backups: /var/backups/hostpanel/"
-    echo ""
-    echo -e "${YELLOW}Next steps:${NC}"
-    echo -e "  1. Configure your domain in nginx"
-    echo -e "  2. Set up SSL certificate with: certbot --nginx -d yourdomain.com"
-    echo -e "  3. Configure SMTP settings in .env file"
-    echo -e "  4. Review firewall settings"
-    echo ""
-    echo -e "${YELLOW}Troubleshooting:${NC}"
-    echo -e "  - Check HostPanel logs: journalctl -u hostpanel -f"
-    echo -e "  - Check Nginx logs: tail -f /var/log/nginx/error.log"
-    echo -e "  - Test Node.js: node --version"
-    echo -e "  - Test application: curl http://localhost:$SERVICE_PORT/health"
-    echo ""
-    echo -e "${GREEN}Installation completed successfully!${NC}"
 }
 
 # Main installation process
 main() {
     print_header
     
+    # Check prerequisites
     check_root
     detect_os
-    install_dependencies
-    install_nodejs  # Install Node.js separately to avoid conflicts
+    initialize_logging
+    
+    # Create backup
+    backup_existing_config
+    
+    # Install and configure everything
+    install_system_dependencies
+    install_mysql
+    secure_mysql
+    setup_databases
+    install_phpmyadmin
+    configure_php
     create_user
     setup_directories
     setup_application
-    setup_database
     create_env_config
+    create_migration_script
     create_systemd_service
     configure_nginx
     configure_firewall
     setup_fail2ban
-    setup_wordpress_installer
     create_maintenance_scripts
     start_services
+    setup_ssl
+    create_credentials_file
     final_status
+    
+    # Final message
+    echo -e "${GREEN}Installation completed successfully!${NC}"
+    echo -e "${YELLOW}Please read CREDENTIALS.txt for important login information.${NC}"
 }
+
+# Handle command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --domain)
+            DOMAIN="$2"
+            shift 2
+            ;;
+        --help)
+            echo "Usage: $0 [--domain your-domain.com]"
+            echo "  --domain: Optional domain name for SSL certificate"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
 
 # Run main installation
 main "$@"

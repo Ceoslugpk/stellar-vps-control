@@ -88,7 +88,7 @@ install_dependencies() {
                 php8.1-mbstring php8.1-xml php8.1-zip php8.1-intl \
                 certbot python3-certbot-nginx ufw fail2ban \
                 htop iotop build-essential software-properties-common \
-                unzip zip
+                unzip zip bc
             
             # Install Node.js
             curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash -
@@ -110,7 +110,7 @@ install_dependencies() {
                 php php-fpm php-mysql php-curl php-gd \
                 php-mbstring php-xml php-zip php-intl \
                 certbot python3-certbot-nginx firewalld fail2ban \
-                htop iotop gcc gcc-c++ make unzip zip
+                htop iotop gcc gcc-c++ make unzip zip bc
             
             # Install Node.js
             curl -fsSL https://rpm.nodesource.com/setup_${NODE_VERSION}.x | bash -
@@ -124,7 +124,7 @@ install_dependencies() {
                 php8 php8-fpm php8-mysql php8-curl php8-gd \
                 php8-mbstring php8-dom php8-zip php8-intl \
                 certbot python3-certbot-nginx firewalld fail2ban \
-                htop iotop gcc gcc-c++ make unzip zip
+                htop iotop gcc gcc-c++ make unzip zip bc
             
             # Install Node.js
             zypper addrepo https://rpm.nodesource.com/pub_${NODE_VERSION}.x/opensuse/leap/15.4/ nodesource
@@ -208,38 +208,19 @@ setup_phpmyadmin() {
     chmod -R 755 "$pma_dir"
     
     # Create phpMyAdmin configuration
-    cat > "$pma_dir/config.inc.php" << 'EOF'
+    local blowfish_secret=$(openssl rand -base64 32)
+    cat > "$pma_dir/config.inc.php" << EOF
 <?php
-$cfg['blowfish_secret'] = '$(openssl rand -base64 32)';
-$i = 0;
-$i++;
-$cfg['Servers'][$i]['auth_type'] = 'cookie';
-$cfg['Servers'][$i]['host'] = 'localhost';
-$cfg['Servers'][$i]['compress'] = false;
-$cfg['Servers'][$i]['AllowNoPassword'] = false;
-$cfg['UploadDir'] = '';
-$cfg['SaveDir'] = '';
-$cfg['TempDir'] = '/tmp/';
-EOF
-
-    # Create phpMyAdmin nginx configuration
-    cat > /etc/nginx/conf.d/phpmyadmin.conf << 'EOF'
-location /phpmyadmin {
-    alias /usr/share/phpmyadmin;
-    index index.php;
-    
-    location ~ \.php$ {
-        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME $request_filename;
-        include fastcgi_params;
-    }
-    
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-}
+\$cfg['blowfish_secret'] = '$blowfish_secret';
+\$i = 0;
+\$i++;
+\$cfg['Servers'][\$i]['auth_type'] = 'cookie';
+\$cfg['Servers'][\$i]['host'] = 'localhost';
+\$cfg['Servers'][\$i]['compress'] = false;
+\$cfg['Servers'][\$i]['AllowNoPassword'] = false;
+\$cfg['UploadDir'] = '';
+\$cfg['SaveDir'] = '';
+\$cfg['TempDir'] = '/tmp/';
 EOF
     
     log_info "phpMyAdmin installed successfully"
@@ -364,6 +345,7 @@ EOF
         localStorage.removeItem('mockDatabases');
         localStorage.removeItem('mockSystemStats');
         localStorage.setItem('vps_real_time_mode', 'true');
+        localStorage.setItem('installation_completed', 'true');
         
         console.log('HostPanel Pro initialized with real-time VPS integration');
     </script>
@@ -455,7 +437,27 @@ server {
         proxy_read_timeout 86400;
     }
     
-    # PHP support for phpMyAdmin and other apps
+    # phpMyAdmin access
+    location /phpmyadmin {
+        alias /usr/share/phpmyadmin;
+        index index.php;
+        
+        location ~ ^/phpmyadmin/(.+\.php)\$ {
+            alias /usr/share/phpmyadmin/\$1;
+            fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME \$request_filename;
+            include fastcgi_params;
+        }
+        
+        location ~* ^/phpmyadmin/(.+\.(js|css|png|jpg|jpeg|gif|ico|svg))\$ {
+            alias /usr/share/phpmyadmin/\$1;
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+    
+    # PHP support for other applications
     location ~ \.php\$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
@@ -487,6 +489,9 @@ EOF
     # Enable the site
     ln -sf /etc/nginx/sites-available/hostpanel /etc/nginx/sites-enabled/
     rm -f /etc/nginx/sites-enabled/default
+    
+    # Remove any conflicting configuration files
+    rm -f /etc/nginx/conf.d/phpmyadmin.conf
     
     # Test configuration
     nginx -t || error_exit "Nginx configuration test failed"

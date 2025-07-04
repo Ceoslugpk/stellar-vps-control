@@ -57,7 +57,7 @@ export const PreferencesManager = () => {
     { id: 3, name: 'Bob Wilson', email: 'bob@example.com', role: 'Viewer', status: 'Inactive' }
   ]);
 
-  const updatePreference = (category: keyof typeof preferences, key: string, value: any) => {
+  const updatePreference = (category: keyof typeof preferences, key: string, value: boolean | number) => {
     setPreferences(prev => ({
       ...prev,
       [category]: {

@@ -10,8 +10,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Archive, Download, Settings, Trash2, Plus, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
+interface Backup {
+  id: number;
+  name: string;
+  date: string;
+  size: string;
+  type: string;
+  status: string;
+}
+
 export const BackupManagement = () => {
-  const [backups, setBackups] = useState([
+  const [backups, setBackups] = useState<Backup[]>([
     {
       id: 1,
       name: 'Full System Backup',
@@ -83,7 +92,7 @@ export const BackupManagement = () => {
     });
   };
 
-  const handleDownloadBackup = (backup: any) => {
+  const handleDownloadBackup = (backup: Backup) => {
     toast({
       title: "Download Started",
       description: `Downloading ${backup.name}...`

@@ -174,27 +174,32 @@ export class SystemMonitor {
     return new Promise((resolve) => {
       setTimeout(() => {
         switch (command.toLowerCase()) {
-          case 'uptime':
+          case 'uptime': {
             resolve({ output: `${this.formatUptime(this.metrics?.uptime || 0)} up, load average: ${this.metrics?.loadAverage.join(', ')}` });
             break;
-          case 'df -h':
+          }
+          case 'df -h': {
             resolve({ 
               output: `Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda1        50G   41G  7.2G  82% /`
             });
             break;
-          case 'free -m':
+          }
+          case 'free -m': {
             const memory = this.metrics?.memory;
             resolve({
               output: `              total        used        free\nMem:           ${Math.floor((memory?.total || 0) / 1024)}        ${Math.floor((memory?.used || 0) / 1024)}        ${Math.floor((memory?.free || 0) / 1024)}`
             });
             break;
-          case 'ps aux | head -10':
+          }
+          case 'ps aux | head -10': {
             resolve({
               output: `USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\nroot         1  0.0  0.1  19356  1544 ?        Ss   Dec01   0:01 /sbin/init\nroot         2  0.0  0.0      0     0 ?        S    Dec01   0:00 [kthreadd]`
             });
             break;
-          default:
+          }
+          default: {
             resolve({ output: `Command '${command}' executed successfully.` });
+          }
         }
       }, 500 + Math.random() * 1000);
     });

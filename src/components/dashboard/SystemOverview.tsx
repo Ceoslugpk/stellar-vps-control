@@ -13,9 +13,17 @@ import {
   Mail, 
   Shield,
   TrendingUp,
-  Clock
+  TrendingDown, // Added
+  Minus,        // Added
+  Clock,
+  Disc,         // Added for Disk Usage
+  ArrowDownUp,  // Added for Network I/O
+  BarChart,     // Added for Load Average
+  Lock,         // Added for SSL Status
+  TerminalSquare // Added for Active Processes
 } from 'lucide-react';
 import { systemMonitor, SystemMetrics } from '@/lib/systemMonitor';
+import { Skeleton } from "@/components/ui/skeleton"; // Added
 
 export const SystemOverview = () => {
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
@@ -85,200 +93,185 @@ export const SystemOverview = () => {
         <p className="text-gray-600">Welcome to your hosting control panel</p>
       </div>
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* Main Dashboard Grid for Summary Boxes */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        {/* Statistics Cards - already somewhat like summary boxes, adapted slightly */}
         {stats.map((stat) => {
-          const Icon = stat.icon;
+          const Icon = stat.icon; // Icon component is uppercase
+          const trendIcon =
+            stat.trend === 'up' ? <TrendingUp className="h-4 w-4 text-green-500" /> :
+            stat.trend === 'down' ? <TrendingDown className="h-4 w-4 text-red-500" /> :
+            stat.trend === 'neutral' ? <Minus className="h-4 w-4 text-gray-500" /> : null;
+
           return (
-            <Card key={stat.name}>
+            <Card key={stat.name} className="flex flex-col">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">{stat.name}</CardTitle>
-                <Icon className="h-4 w-4 text-muted-foreground" />
+                <Icon className="h-5 w-5 text-muted-foreground" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{stat.value}</div>
-                <div className="flex items-center space-x-1">
-                  {stat.trend === 'up' && <TrendingUp className="h-3 w-3 text-green-600" />}
-                  <p className="text-xs text-muted-foreground">{stat.change}</p>
-                </div>
+                {stat.change && (
+                  <div className="flex items-center space-x-1 text-xs text-muted-foreground mt-1">
+                    {trendIcon}
+                    <span>{stat.change}</span>
+                  </div>
+                )}
               </CardContent>
             </Card>
           );
         })}
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Server Resources - Real-time */}
+        {/* Server Resources Boxes */}
+        {metrics ? (
+          <>
+            {/* CPU Usage Box */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">CPU Usage</CardTitle>
+                <Activity className="h-5 w-5 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{metrics.cpu.usage.toFixed(1)}%</div>
+                <Progress value={metrics.cpu.usage} className="h-2 mt-2" />
+                <p className="text-xs text-muted-foreground mt-1 truncate" title={`${metrics.cpu.cores} cores • ${metrics.cpu.model}`}>
+                  {metrics.cpu.cores} cores • {metrics.cpu.model}
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Memory Usage Box */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Memory Usage</CardTitle>
+                <HardDrive className="h-5 w-5 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{metrics.memory.usage.toFixed(1)}%</div>
+                <Progress value={metrics.memory.usage} className="h-2 mt-2" />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {(metrics.memory.used / 1024).toFixed(1)}GB / {(metrics.memory.total / 1024).toFixed(1)}GB
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Disk Usage Box */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Disk Usage</CardTitle>
+                <Disc className="h-5 w-5 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{metrics.disk.usage.toFixed(1)}%</div>
+                <Progress value={metrics.disk.usage} className="h-2 mt-2" />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {(metrics.disk.used / 1024).toFixed(1)}GB / {(metrics.disk.total / 1024).toFixed(1)}GB Used
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Network Activity Box */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Network I/O</CardTitle>
+                <ArrowDownUp className="h-5 w-5 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-lg font-bold">
+                  ↓ {(metrics.network.bytesIn / 1024 / 1024).toFixed(1)} MB
+                </div>
+                <div className="text-lg font-bold">
+                  ↑ {(metrics.network.bytesOut / 1024 / 1024).toFixed(1)} MB
+                </div>
+                 <p className="text-xs text-muted-foreground mt-1">
+                  Total: {((metrics.network.bytesIn + metrics.network.bytesOut) / 1024 / 1024).toFixed(1)} MB
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Server Uptime Box */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Server Uptime</CardTitle>
+                <Clock className="h-5 w-5 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{formatUptime(metrics.uptime)}</div>
+                <p className="text-xs text-muted-foreground mt-1">Current system uptime</p>
+              </CardContent>
+            </Card>
+
+            {/* Load Average Box */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Load Average</CardTitle>
+                <BarChart className="h-5 w-5 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {metrics.loadAverage.slice(0,3).map(l => l.toFixed(2)).join(' / ')}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">1m / 5m / 15m averages</p>
+              </CardContent>
+            </Card>
+
+            {/* Active Processes Box */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Active Processes</CardTitle>
+                <TerminalSquare className="h-5 w-5 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{metrics.processes}</div>
+                 <p className="text-xs text-muted-foreground mt-1">Currently running processes</p>
+              </CardContent>
+            </Card>
+          </>
+        ) : (
+          // Skeleton loaders for when metrics are null
+          Array.from({ length: 7 }).map((_, index) => ( // Show skeletons for the typical number of metric cards
+            <Card key={`skeleton-${index}`}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="h-5 w-5 rounded-full" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-1/2 mb-2" />
+                <Skeleton className="h-2 w-full mb-1" />
+                <Skeleton className="h-3 w-3/4" />
+              </CardContent>
+            </Card>
+          ))
+        )}
+
+        {/* Firewall Status Box (Static example) */}
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <div className="flex items-center">
-                <Server className="mr-2 h-5 w-5" />
-                Server Resources
-              </div>
-              <Badge variant="outline" className="animate-pulse">
-                Live
-              </Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {metrics ? (
-              <>
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>CPU Usage</span>
-                    <span className={getResourceColor(metrics.cpu.usage)}>
-                      {metrics.cpu.usage.toFixed(1)}%
-                    </span>
-                  </div>
-                  <Progress value={metrics.cpu.usage} className="h-2" />
-                  <p className="text-xs text-gray-500 mt-1">
-                    {metrics.cpu.cores} cores • {metrics.cpu.model}
-                  </p>
-                </div>
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>Memory Usage</span>
-                    <span className={getResourceColor(metrics.memory.usage)}>
-                      {metrics.memory.usage.toFixed(1)}%
-                    </span>
-                  </div>
-                  <Progress value={metrics.memory.usage} className="h-2" />
-                  <p className="text-xs text-gray-500 mt-1">
-                    {(metrics.memory.used / 1024).toFixed(1)}GB / {(metrics.memory.total / 1024).toFixed(1)}GB
-                  </p>
-                </div>
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>Disk Usage</span>
-                    <span className={getResourceColor(metrics.disk.usage)}>
-                      {metrics.disk.usage.toFixed(1)}%
-                    </span>
-                  </div>
-                  <Progress value={metrics.disk.usage} className="h-2" />
-                  <p className="text-xs text-gray-500 mt-1">
-                    {(metrics.disk.used / 1024).toFixed(1)}GB / {(metrics.disk.total / 1024).toFixed(1)}GB free
-                  </p>
-                </div>
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span>Network Activity</span>
-                    <span className="text-blue-600">
-                      {((metrics.network.bytesIn + metrics.network.bytesOut) / 1024 / 1024).toFixed(1)} MB/s
-                    </span>
-                  </div>
-                  <div className="flex space-x-2 text-xs text-gray-500">
-                    <span>↓ {(metrics.network.bytesIn / 1024 / 1024).toFixed(1)} MB</span>
-                    <span>↑ {(metrics.network.bytesOut / 1024 / 1024).toFixed(1)} MB</span>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="flex items-center justify-center h-32">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* System Information */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Activity className="mr-2 h-5 w-5" />
-              System Information
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {systemInfo.map((info, index) => (
-                <div key={index} className="flex justify-between items-center">
-                  <span className="text-sm text-gray-600 flex items-center">
-                    {info.label === 'Server Uptime' && <Clock className="w-3 h-3 mr-1" />}
-                    {info.label}:
-                  </span>
-                  <span className="text-sm font-medium">{info.value}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Security Status */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <Shield className="mr-2 h-5 w-5" />
-            Security Status
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="text-center p-4 bg-green-50 rounded-lg">
-              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                <Shield className="h-6 w-6 text-green-600" />
-              </div>
-              <p className="text-sm font-medium text-green-800">Firewall Active</p>
-              <p className="text-xs text-green-600">All ports secured</p>
-            </div>
-            <div className="text-center p-4 bg-green-50 rounded-lg">
-              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                <Shield className="h-6 w-6 text-green-600" />
-              </div>
-              <p className="text-sm font-medium text-green-800">SSL Active</p>
-              <p className="text-xs text-green-600">Certificates valid</p>
-            </div>
-            <div className="text-center p-4 bg-yellow-50 rounded-lg">
-              <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                <Shield className="h-6 w-6 text-yellow-600" />
-              </div>
-              <p className="text-sm font-medium text-yellow-800">Updates Available</p>
-              <p className="text-xs text-yellow-600">3 security patches</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Quick Actions */}
-      {metrics && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Activity className="mr-2 h-5 w-5" />
-              Quick Actions
-            </CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Firewall Status</CardTitle>
+            <Shield className="h-5 w-5 text-green-500" /> {/* Green icon for active */}
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <button className="p-3 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors">
-                <div className="text-center">
-                  <Server className="h-6 w-6 mx-auto mb-1 text-blue-600" />
-                  <p className="text-xs font-medium">Restart Services</p>
-                </div>
-              </button>
-              <button className="p-3 bg-green-50 hover:bg-green-100 rounded-lg transition-colors">
-                <div className="text-center">
-                  <Database className="h-6 w-6 mx-auto mb-1 text-green-600" />
-                  <p className="text-xs font-medium">Backup Now</p>
-                </div>
-              </button>
-              <button className="p-3 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors">
-                <div className="text-center">
-                  <Shield className="h-6 w-6 mx-auto mb-1 text-purple-600" />
-                  <p className="text-xs font-medium">Security Scan</p>
-                </div>
-              </button>
-              <button className="p-3 bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors">
-                <div className="text-center">
-                  <HardDrive className="h-6 w-6 mx-auto mb-1 text-orange-600" />
-                  <p className="text-xs font-medium">Disk Cleanup</p>
-                </div>
-              </button>
-            </div>
+            <div className="text-2xl font-bold">Active</div>
+            <p className="text-xs text-muted-foreground mt-1">UFW Enabled</p>
           </CardContent>
         </Card>
-      )}
+
+        {/* SSL Status Box (Static example) */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">SSL Certificates</CardTitle>
+            <Lock className="h-5 w-5 text-green-500" /> {/* Green icon for secure */}
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">Managed</div>
+            <p className="text-xs text-muted-foreground mt-1">Via Let's Encrypt / Custom</p>
+          </CardContent>
+        </Card>
+
+      </div>
+
+      {/* The old combined "System Information" card, "Security Status" card, and "Quick Actions" card are removed. */}
+      {/* Their content is now distributed into the summary boxes above or removed. */}
     </div>
   );
 };

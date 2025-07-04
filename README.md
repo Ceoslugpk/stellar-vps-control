@@ -67,15 +67,20 @@ This method uses a script to automate the initial server setup, including instal
 
 **About the Script (`scripts/vps_setup_ubuntu2204.sh`):**
 
-*   **Purpose:** Automates the initial setup of an Ubuntu 22.04 LTS server for HostPanel Pro.
-*   **Installs:**
-    *   A new non-root user with `sudo` privileges (you'll be prompted for username/password).
-    *   Essential utilities: `git`, `curl`, `wget`, `build-essential`.
-    *   Node.js (LTS version) and PM2 process manager.
-    *   Nginx web server.
-    *   PostgreSQL database server.
-    *   UFW (Uncomplicated Firewall) with rules for SSH, HTTP, HTTPS.
-    *   Certbot (for Let's Encrypt SSL certificates).
+*   **Purpose:** Automates the initial setup of an Ubuntu 22.04 LTS server and deploys the HostPanel Pro application.
+*   **Automates:**
+    *   Creation of a new non-root user with `sudo` privileges (prompts for username/password).
+    *   Installation of essential utilities: `git`, `curl`, `wget`, `build-essential`.
+    *   Installation of Node.js (LTS), npm, and PM2 process manager.
+    *   Installation and basic configuration of Nginx (including proxy to Node.js app on port 3000).
+    *   Installation and basic configuration of PostgreSQL (creates a user and database).
+    *   Setup of UFW (firewall) with rules for SSH, HTTP, HTTPS.
+    *   Installation of Certbot (for Let's Encrypt SSL).
+    *   Cloning of the HostPanel Pro repository (uses a placeholder URL, ensure `scripts/vps_setup_ubuntu2204.sh` has the correct one).
+    *   Installation of HostPanel Pro application dependencies (`npm install`).
+    *   Building of the HostPanel Pro application (`npm run build`).
+    *   Creation of a placeholder `.env` file for HostPanel Pro.
+    *   Setup of PM2 to manage the HostPanel Pro application.
 
 **Steps:**
 
@@ -114,66 +119,39 @@ After the script completes, you **must** perform these steps:
         ```bash
         sudo nano /etc/nginx/sites-available/your_domain.com
         ```
-        *(Replace `your_domain.com` with the actual placeholder filename if different)*.
-    *   Update `server_name` with your actual domain (e.g., `panel.yourdomain.com`).
-    *   Uncomment and configure the `proxy_pass` directive in the `location /` block to point to your HostPanel Pro application (which will typically run on port 3000 or similar):
-        ```nginx
-        location / {
-            # try_files $uri $uri/ =404; # Keep this if serving static site, remove/comment for proxy
-            proxy_pass http://localhost:3000; # Assuming HostPanel runs on port 3000
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection 'upgrade';
-            proxy_set_header Host $host;
-            proxy_cache_bypass $http_upgrade;
-        }
-        ```
+        *(Replace `your_domain.com` with the actual placeholder filename used by the script if different)*.
+    *   Update `server_name` with your actual domain (e.g., `panel.yourdomain.com`). The script pre-configures `proxy_pass` to `http://localhost:3000`. If your application's `.env` file specifies a different `PORT`, ensure the `proxy_pass` port in Nginx matches it.
     *   Test Nginx configuration and reload:
         ```bash
         sudo nginx -t
         sudo systemctl reload nginx
         ```
 
-3.  **SSL Certificate (Let's Encrypt):**
-    *   Once DNS has propagated, run Certbot:
+3.  **Application Environment Configuration (`.env` file):**
+    *   **CRITICAL:** The script creates a placeholder `.env` file in the application directory (`/home/your_new_username/hostpanel-pro/.env`). You **must** edit this file:
+        ```bash
+        sudo nano /home/your_new_username/hostpanel-pro/.env
+        ```
+        *(Replace `your_new_username` with the actual username you provided to the script).*
+    *   Fill in the following:
+        *   `DB_PASSWORD`: The password you set for the PostgreSQL user during the script's execution.
+        *   `JWT_SECRET`: A strong, unique random string for session security.
+        *   Review other settings like `PORT` (if you changed it from the default 3000), SMTP details, etc.
+    *   After saving the `.env` file, restart the HostPanel Pro application using PM2 for the changes to take effect:
+        ```bash
+        sudo -u your_new_username pm2 restart hostpanel-pro
+        ```
+
+4.  **SSL Certificate (Let's Encrypt):**
+    *   Once DNS has propagated and Nginx is configured with your actual domain, run Certbot:
         ```bash
         sudo certbot --nginx -d panel.yourdomain.com # Replace with your actual domain
         ```
     *   Follow Certbot's prompts. It will automatically update your Nginx configuration for SSL.
 
-4.  **Deploy HostPanel Pro Application:**
-    *   As the new user, clone the HostPanel Pro repository (if not already done, or clone fresh into the user's home directory):
-        ```bash
-        git clone https://github.com/your-repo/hostpanel-pro.git ~/hostpanel-pro
-        cd ~/hostpanel-pro
-        ```
-    *   Install dependencies:
-        ```bash
-        npm install
-        ```
-    *   Build the application:
-        ```bash
-        npm run build
-        ```
-        *(The build output will typically be in a `dist` or `build` folder).*
-    *   **Important:** Configure HostPanel Pro. Create a `.env` file from `.env.example` (if available) or set necessary environment variables for database connection, JWT secret, etc., as detailed in the "Configuration" section of this README. The database user and database name would be the ones you (or the script defaults) set up during the PostgreSQL configuration part of the script.
-
-5.  **Run with PM2:**
-    *   Start your application using PM2 (ensure your `package.json` has a suitable start script or specify your entry file, e.g., `server.js` or a similar file that serves the build):
-        ```bash
-        # Example: if your package.json has a "start" script that runs "vite preview" or "node server.js"
-        pm2 start npm --name "hostpanel-pro" -- run start
-        # Or, if you have a specific server file for production:
-        # pm2 start server.js --name "hostpanel-pro"
-        ```
-    *   Save the PM2 process list to restart on boot:
-        ```bash
-        pm2 save
-        ```
-    *   Check status: `pm2 list` or `pm2 logs hostpanel-pro`.
-
-6.  **Access HostPanel Pro:**
+5.  **Access HostPanel Pro:**
     *   You should now be able to access HostPanel Pro at `https://panel.yourdomain.com`.
+    *   Check PM2 logs if you encounter issues: `sudo -u your_new_username pm2 logs hostpanel-pro`.
 
 ### Manual Installation / Local Development
 

@@ -97,18 +97,87 @@ sudo -u "$NEW_USERNAME" env PATH=$PATH:/usr/bin pm2 startup systemd -u "$NEW_USE
 # The previous command will output a command that needs to be run as root.
 # Example: sudo env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u newuser --hp /home/newuser
 # We capture this and run it.
-PM2_STARTUP_CMD=$(sudo -u "$NEW_USERNAME" env PATH=$PATH:/usr/bin pm2 startup systemd -u "$NEW_USERNAME" --hp "/home/$NEW_USERNAME" | grep "sudo")
-if [ -n "$PM2_STARTUP_CMD" ]; then
-    echo "Running PM2 startup command: $PM2_STARTUP_CMD"
-    eval "$PM2_STARTUP_CMD"
+PM2_STARTUP_CMD_OUTPUT=$(sudo -u "$NEW_USERNAME" env PATH=$PATH:/usr/bin pm2 startup systemd -u "$NEW_USERNAME" --hp "/home/$NEW_USERNAME" 2>&1)
+PM2_SUDO_CMD=$(echo "$PM2_STARTUP_CMD_OUTPUT" | grep "sudo env" | head -n 1)
+
+if [ -n "$PM2_SUDO_CMD" ]; then
+    echo "Running PM2 startup command: $PM2_SUDO_CMD"
+    eval "$PM2_SUDO_CMD"
+    # Ensure PM2 user directory exists
+    sudo -u "$NEW_USERNAME" mkdir -p "/home/$NEW_USERNAME/.pm2"
     sudo -u "$NEW_USERNAME" env PATH=$PATH:/usr/bin pm2 save --force # Save current empty process list
     echo "PM2 configured to start on boot for user $NEW_USERNAME."
 else
-    echo "Could not automatically determine PM2 startup command. Please run it manually if needed."
+    echo "Could not automatically determine PM2 startup command. Please review output and run manually if needed:"
+    echo "$PM2_STARTUP_CMD_OUTPUT"
 fi
 
+# --- 5. HostPanel Pro Application Setup ---
+print_step "Setting up HostPanel Pro Application for user '$NEW_USERNAME'..."
+APP_DIR="/home/$NEW_USERNAME/hostpanel-pro"
+REPO_URL="https://github.com/your-repo/hostpanel-pro.git" # Replace with actual repo URL
 
-# --- 5. Install Nginx ---
+# Run as new user
+sudo -u "$NEW_USERNAME" bash -c "
+    set -e
+    echo 'Cloning HostPanel Pro repository...'
+    git clone \"$REPO_URL\" \"$APP_DIR\"
+
+    cd \"$APP_DIR\"
+    echo 'Installing HostPanel Pro dependencies...'
+    npm install
+
+    echo 'Building HostPanel Pro application...'
+    npm run build
+
+    echo 'Creating placeholder .env file...'
+    # Default DB name and user from script variables
+    DB_NAME_DEFAULT=\"${NEW_USERNAME}_db\"
+    DB_USER_DEFAULT=\"$NEW_USERNAME\"
+
+    cat <<EOF_ENV > .env
+# HostPanel Pro Environment Variables
+# IMPORTANT: Fill in the missing values below, especially passwords and secrets.
+
+# Database Configuration (PostgreSQL)
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=\${DB_NAME_DEFAULT}
+DB_USER=\${DB_USER_DEFAULT}
+DB_PASSWORD=YOUR_POSTGRES_USER_PASSWORD_HERE # <<< IMPORTANT: SET THIS PASSWORD
+
+# Security Settings
+JWT_SECRET=YOUR_STRONG_JWT_SECRET_HERE # <<< IMPORTANT: SET THIS (use a long random string)
+SESSION_TIMEOUT=1800 # In seconds
+MAX_LOGIN_ATTEMPTS=5
+
+# Application Port (Ensure this matches Nginx proxy_pass if changed from 3000)
+# PORT=3000
+
+# Email Configuration (Optional)
+# SMTP_HOST=smtp.example.com
+# SMTP_PORT=587
+# SMTP_USER=noreply@example.com
+# SMTP_PASS=smtp_password
+
+# Backup Settings (Optional - ensure path is writable by $NEW_USERNAME)
+# BACKUP_PATH=/home/$NEW_USERNAME/hostpanel_backups
+# BACKUP_RETENTION=30
+EOF_ENV
+
+    echo 'Placeholder .env file created. Please edit $APP_DIR/.env with your actual secrets.'
+
+    echo 'Setting up PM2 for HostPanel Pro...'
+    # Assuming 'npm run start' will run the production server (e.g., vite preview or node server.js)
+    # Ensure your package.json has a 'start' script configured for production.
+    env PATH=\$PATH:/usr/bin pm2 start npm --name hostpanel-pro -- run start
+    env PATH=\$PATH:/usr/bin pm2 save --force
+    echo 'HostPanel Pro application setup with PM2.'
+"
+echo "HostPanel Pro application setup initiated in $APP_DIR."
+echo "IMPORTANT: You MUST edit $APP_DIR/.env and fill in your secrets (DB_PASSWORD, JWT_SECRET)."
+
+# --- 6. Install Nginx ---
 print_step "Installing Nginx..."
 apt install -y nginx
 
@@ -130,14 +199,21 @@ server {
     index index.html index.htm;
 
     location / {
-        try_files \$uri \$uri/ =404;
-        # Example for proxying to a Node.js app (e.g., running on port 3000)
-        # proxy_pass http://localhost:3000;
-        # proxy_http_version 1.1;
-        # proxy_set_header Upgrade \$http_upgrade;
-        # proxy_set_header Connection 'upgrade';
-        # proxy_set_header Host \$host;
-        # proxy_cache_bypass \$http_upgrade;
+        # If you are serving static files directly from Nginx (e.g., after 'npm run build' if it outputs to root)
+        # you might use try_files like this:
+        # try_files \$uri \$uri/ /index.html;
+
+        # For proxying to the Node.js HostPanel Pro application (recommended)
+        proxy_pass http://localhost:3000; # Assumes HostPanel Pro runs on port 3000
+                                         # Change if your app (PORT in .env) uses a different port
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
     }
 
     # SSL settings will be added by Certbot
@@ -224,25 +300,46 @@ apt install -y certbot python3-certbot-nginx
 echo "Certbot installed."
 
 # --- 9. Final Instructions & Cleanup ---
-print_step "VPS Setup Almost Complete!"
+print_step "HostPanel Pro Setup Almost Complete!"
 echo ""
 echo "--------------------- IMPORTANT NEXT STEPS ---------------------"
-echo "1. DNS Configuration: Point your domain name ($PLACEHOLDER_DOMAIN or your actual domain) to this server's IP address."
-echo "2. Nginx Configuration: Edit '$NGINX_SITE_CONF' to replace '$PLACEHOLDER_DOMAIN' with your actual domain name."
-echo "   Then run: sudo nginx -t && sudo systemctl reload nginx"
-echo "3. SSL Certificate: Once DNS is propagated, run Certbot to obtain SSL certificate:"
-echo "   sudo certbot --nginx -d your_actual_domain.com -d www.your_actual_domain.com (replace with your domain)"
-echo "   Certbot will automatically update your Nginx configuration for SSL."
-echo "4. PostgreSQL: Connect and manage your database using:"
-echo "   sudo -u $NEW_PG_USER psql $NEW_PG_DB"
-echo "   Consider further security hardening for PostgreSQL if needed."
-echo "5. Application Deployment: Deploy your application (e.g., Node.js app in /home/$NEW_USERNAME/app)."
-echo "   Use PM2 to manage your Node.js application: "
-echo "   sudo -u $NEW_USERNAME pm2 start /home/$NEW_USERNAME/app/your_app.js --name my-app"
-echo "   sudo -u $NEW_USERNAME pm2 save"
-echo "6. SSH Security: For enhanced security, consider:"
-echo "   - Disabling password authentication and using SSH keys only."
-echo "   - Changing the default SSH port (update UFW if you do)."
+echo "The script has automated server setup and initial application deployment."
+echo "However, you MUST complete the following critical steps:"
+echo ""
+echo "1. DNS Configuration:"
+echo "   - Point your domain name (e.g., panel.yourdomain.com) to this server's IP address."
+echo "     This is done via your domain registrar or DNS provider."
+echo ""
+echo "2. Nginx Domain Configuration:"
+echo "   - Edit the Nginx site configuration: sudo nano $NGINX_SITE_CONF"
+echo "   - Replace all instances of '$PLACEHOLDER_DOMAIN' (and 'www.$PLACEHOLDER_DOMAIN') with your actual domain name."
+echo "   - Verify Nginx port: If your app uses a port other than 3000 (check $APP_DIR/.env for PORT), update the 'proxy_pass' line in Nginx."
+echo "   - After editing, test and reload Nginx: sudo nginx -t && sudo systemctl reload nginx"
+echo ""
+echo "3. Application Environment Configuration (.env file):"
+echo "   - CRITICAL: Edit the .env file for HostPanel Pro: sudo nano $APP_DIR/.env"
+echo "   - Set DB_PASSWORD to the password you created for the PostgreSQL user '$NEW_PG_USER'."
+echo "   - Set a strong, unique JWT_SECRET."
+echo "   - Review and set any other necessary configurations (e.g., SMTP, PORT if not 3000)."
+echo "   - After saving .env, restart the application with PM2:"
+echo "     sudo -u $NEW_USERNAME pm2 restart hostpanel-pro"
+echo ""
+echo "4. SSL Certificate (Let's Encrypt with Certbot):"
+echo "   - Once DNS is propagated and Nginx is configured with your actual domain, run Certbot:"
+echo "     sudo certbot --nginx -d your_actual_domain.com # (replace with your domain, e.g., panel.yourdomain.com)"
+echo "   - Follow Certbot's prompts. It will automatically update Nginx for SSL."
+echo ""
+echo "5. PostgreSQL Access & Security:"
+echo "   - To manage PostgreSQL: sudo -u $NEW_PG_USER psql ${NEW_USERNAME}_db"
+echo "   - Review PostgreSQL security (pg_hba.conf) if remote access or different auth methods are needed."
+echo ""
+echo "6. Final Application Check:"
+echo "   - Check PM2 logs: sudo -u $NEW_USERNAME pm2 logs hostpanel-pro"
+echo "   - Ensure your application is running correctly and can connect to the database."
+echo ""
+echo "7. SSH Security (Recommended):"
+echo "   - Disable password authentication and use SSH keys only (/etc/ssh/sshd_config)."
+echo "   - Consider changing the default SSH port (update UFW if you do)."
 echo "------------------------------------------------------------------"
 echo ""
 print_step "Performing system cleanup..."

@@ -57,32 +57,164 @@ A comprehensive, modern web hosting control panel application that replicates an
 - **Storage**: 50 GB SSD
 - **Network**: Public IP with reverse DNS
 
-## 🚀 Quick Installation
+## 🚀 Deployment & Installation
 
-### Standard Installation
+We recommend using the provided setup script for deploying HostPanel Pro on a fresh Ubuntu 22.04 LTS VPS. For other operating systems, manual installation, or local development, please see the manual setup instructions below.
+
+### VPS Deployment with Setup Script (Recommended for Ubuntu 22.04)
+
+This method uses a script to automate the initial server setup, including installing necessary dependencies like Nginx, Node.js, PostgreSQL, and configuring the firewall.
+
+**About the Script (`scripts/vps_setup_ubuntu2204.sh`):**
+
+*   **Purpose:** Automates the initial setup of an Ubuntu 22.04 LTS server for HostPanel Pro.
+*   **Installs:**
+    *   A new non-root user with `sudo` privileges (you'll be prompted for username/password).
+    *   Essential utilities: `git`, `curl`, `wget`, `build-essential`.
+    *   Node.js (LTS version) and PM2 process manager.
+    *   Nginx web server.
+    *   PostgreSQL database server.
+    *   UFW (Uncomplicated Firewall) with rules for SSH, HTTP, HTTPS.
+    *   Certbot (for Let's Encrypt SSL certificates).
+
+**Steps:**
+
+1.  **Download/Transfer the Script:**
+    *   The script `vps_setup_ubuntu2204.sh` is included in this repository in the `scripts/` directory.
+    *   Upload it to your server (e.g., using `scp`):
+        ```bash
+        scp ./scripts/vps_setup_ubuntu2204.sh your_vps_user@your_vps_ip:~/
+        ```
+        *(Replace `your_vps_user` and `your_vps_ip` with your server details. This initial user might be `root` or a user provided by your VPS host).*
+
+2.  **Make Executable:**
+    *   Log in to your VPS via SSH.
+    *   Navigate to where you uploaded the script and make it executable:
+        ```bash
+        chmod +x vps_setup_ubuntu2204.sh
+        ```
+
+3.  **Run the Script:**
+    *   Execute the script with `sudo` privileges:
+        ```bash
+        sudo ./vps_setup_ubuntu2204.sh
+        ```
+    *   The script will prompt you to enter a username and password for the new non-root user it will create. Follow the on-screen instructions.
+
+**Post-Script Setup (Crucial Manual Steps):**
+
+After the script completes, you **must** perform these steps:
+
+1.  **DNS Configuration:**
+    *   Point your domain name (e.g., `panel.yourdomain.com`) to your server's public IP address. This is done via your domain registrar or DNS provider.
+
+2.  **Nginx Configuration:**
+    *   Log in as the new user created by the script.
+    *   Edit the Nginx site configuration file (the script will tell you the placeholder path, typically `/etc/nginx/sites-available/your_domain.com`):
+        ```bash
+        sudo nano /etc/nginx/sites-available/your_domain.com
+        ```
+        *(Replace `your_domain.com` with the actual placeholder filename if different)*.
+    *   Update `server_name` with your actual domain (e.g., `panel.yourdomain.com`).
+    *   Uncomment and configure the `proxy_pass` directive in the `location /` block to point to your HostPanel Pro application (which will typically run on port 3000 or similar):
+        ```nginx
+        location / {
+            # try_files $uri $uri/ =404; # Keep this if serving static site, remove/comment for proxy
+            proxy_pass http://localhost:3000; # Assuming HostPanel runs on port 3000
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+        }
+        ```
+    *   Test Nginx configuration and reload:
+        ```bash
+        sudo nginx -t
+        sudo systemctl reload nginx
+        ```
+
+3.  **SSL Certificate (Let's Encrypt):**
+    *   Once DNS has propagated, run Certbot:
+        ```bash
+        sudo certbot --nginx -d panel.yourdomain.com # Replace with your actual domain
+        ```
+    *   Follow Certbot's prompts. It will automatically update your Nginx configuration for SSL.
+
+4.  **Deploy HostPanel Pro Application:**
+    *   As the new user, clone the HostPanel Pro repository (if not already done, or clone fresh into the user's home directory):
+        ```bash
+        git clone https://github.com/your-repo/hostpanel-pro.git ~/hostpanel-pro
+        cd ~/hostpanel-pro
+        ```
+    *   Install dependencies:
+        ```bash
+        npm install
+        ```
+    *   Build the application:
+        ```bash
+        npm run build
+        ```
+        *(The build output will typically be in a `dist` or `build` folder).*
+    *   **Important:** Configure HostPanel Pro. Create a `.env` file from `.env.example` (if available) or set necessary environment variables for database connection, JWT secret, etc., as detailed in the "Configuration" section of this README. The database user and database name would be the ones you (or the script defaults) set up during the PostgreSQL configuration part of the script.
+
+5.  **Run with PM2:**
+    *   Start your application using PM2 (ensure your `package.json` has a suitable start script or specify your entry file, e.g., `server.js` or a similar file that serves the build):
+        ```bash
+        # Example: if your package.json has a "start" script that runs "vite preview" or "node server.js"
+        pm2 start npm --name "hostpanel-pro" -- run start
+        # Or, if you have a specific server file for production:
+        # pm2 start server.js --name "hostpanel-pro"
+        ```
+    *   Save the PM2 process list to restart on boot:
+        ```bash
+        pm2 save
+        ```
+    *   Check status: `pm2 list` or `pm2 logs hostpanel-pro`.
+
+6.  **Access HostPanel Pro:**
+    *   You should now be able to access HostPanel Pro at `https://panel.yourdomain.com`.
+
+### Manual Installation / Local Development
+
+These steps are for setting up a local development environment or for manually installing on operating systems other than Ubuntu 22.04 (where the script is not applicable).
 
 ```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install prerequisites
-sudo apt install -y curl wget git nginx nodejs npm certbot python3-certbot-nginx ufw
-
-# Clone repository
+# 1. Clone repository
 git clone https://github.com/your-repo/hostpanel-pro.git
 cd hostpanel-pro
 
-# Install dependencies
+# 2. Install Node.js and npm
+# (Refer to Node.js official documentation for your OS)
+# Example for Ubuntu/Debian:
+# sudo apt update
+# sudo apt install -y nodejs npm
+
+# 3. Install dependencies
 npm install
 
-# Build application
+# 4. Build application (for production preview or manual deployment)
 npm run build
 
-# Start development server
+# 5. Start development server (for local development)
 npm run dev
 ```
+This starts a local development server (usually on `http://localhost:5173` or similar).
+
+**For manual production deployment (without the VPS script):**
+You would need to:
+1.  Set up a web server (Nginx or Apache).
+2.  Configure it to serve the built static files (from `dist` or `build` folder) or proxy to your Node.js server process.
+3.  Set up a database (PostgreSQL, MySQL).
+4.  Configure environment variables for HostPanel Pro.
+5.  Use a process manager like PM2 to keep your application running.
+6.  Set up SSL certificates.
+
+For more detailed manual steps, refer to our comprehensive [Installation Guide](INSTALLATION.md).
 
 ### Docker Installation
+
+For users who prefer Docker:
 
 ```bash
 # Clone repository
@@ -92,10 +224,12 @@ cd hostpanel-pro
 # Start with Docker Compose
 docker-compose up -d
 ```
+*(Ensure you have Docker and Docker Compose installed. Configuration details for Docker deployment can be found in `INSTALLATION.md` or a dedicated Docker guide if available).*
+
 
 ## 📖 Detailed Installation Guide
 
-For complete installation instructions, system configuration, and deployment guide, please refer to our comprehensive [Installation Guide](INSTALLATION.md).
+For complete manual installation instructions, system configuration, and advanced deployment scenarios, please refer to our comprehensive [Installation Guide](INSTALLATION.md).
 
 The installation guide covers:
 - System preparation and prerequisites
